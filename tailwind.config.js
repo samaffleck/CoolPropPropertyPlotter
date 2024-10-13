@@ -43,6 +43,9 @@ module.exports = {
         gradient: {
           to: { "background-position": "200% center" },
         },
+        colors: {
+          'custom-gray': 'rgb(30, 31, 33)',  
+        },
       },
     },
   },

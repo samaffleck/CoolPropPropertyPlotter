@@ -1,7 +1,21 @@
-import VideoThumb from "@/public/images/hero-image-01.jpg";
-import ModalVideo from "@/components/modal-video";
+"use client";
+
+import { useEffect, useState } from 'react';
+import Image from "next/image";
+import ToolDemoImg from "@/public/images/tool_demo.jpg";
+import Link from "next/link";
 
 export default function HeroHome() {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  if (!isMounted) {
+    return null; // Render nothing on the server to avoid mismatch
+  }
+  
   return (
     <section>
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
@@ -13,7 +27,7 @@ export default function HeroHome() {
               className="animate-[gradient_6s_linear_infinite] bg-[linear-gradient(to_right,theme(colors.gray.200),theme(colors.indigo.200),theme(colors.gray.50),theme(colors.indigo.300),theme(colors.gray.200))] bg-[length:200%_auto] bg-clip-text pb-5 font-nacelle text-4xl font-semibold text-transparent md:text-5xl"
               data-aos="fade-up"
             >
-              AI-driven tools for product teams
+              Thermophysical Properties of Fluids
             </h1>
             <div className="mx-auto max-w-3xl">
               <p
@@ -21,44 +35,48 @@ export default function HeroHome() {
                 data-aos="fade-up"
                 data-aos-delay={200}
               >
-                Our landing page template works on all devices, so you only have
-                to set it up once, and get beautiful results forever.
+                Plot the thermophysical properties of pure fluids from your browser. 
               </p>
-              <div className="mx-auto max-w-xs sm:flex sm:max-w-none sm:justify-center">
+              <Image
+                className="max-w-none"
+                src={ToolDemoImg}
+                width={760}
+                height={668}
+                alt="Tool demo"
+              />
+              <div className="flex justify-center pb-4 md:pb-16" data-aos="fade-up">
+              </div>
                 <div data-aos="fade-up" data-aos-delay={400}>
-                  <a
-                    className="btn group mb-4 w-full bg-gradient-to-t from-indigo-600 to-indigo-500 bg-[length:100%_100%] bg-[bottom] text-white shadow-[inset_0px_1px_0px_0px_theme(colors.white/.16)] hover:bg-[length:100%_150%] sm:mb-0 sm:w-auto"
-                    href="#0"
-                  >
-                    <span className="relative inline-flex items-center">
-                      Start Building
-                      <span className="ml-1 tracking-normal text-white/50 transition-transform group-hover:translate-x-0.5">
-                        -&gt;
-                      </span>
-                    </span>
-                  </a>
-                </div>
-                <div data-aos="fade-up" data-aos-delay={600}>
-                  <a
-                    className="btn relative w-full bg-gradient-to-b from-gray-800 to-gray-800/60 bg-[length:100%_100%] bg-[bottom] text-gray-300 before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit] before:border before:border-transparent before:[background:linear-gradient(to_right,theme(colors.gray.800),theme(colors.gray.700),theme(colors.gray.800))_border-box] before:[mask-composite:exclude_!important] before:[mask:linear-gradient(white_0_0)_padding-box,_linear-gradient(white_0_0)] hover:bg-[length:100%_150%] sm:ml-4 sm:w-auto"
-                    href="#0"
-                  >
-                    Schedule Demo
+                  <a className="btn group mb-4 w-full bg-gradient-to-t from-indigo-600 to-indigo-500 bg-[length:100%_100%] bg-[bottom] text-white shadow-[inset_0px_1px_0px_0px_theme(colors.white/.16)] hover:bg-[length:100%_150%] sm:mb-0 sm:w-auto">
+                    <Link href="/propertyplotter">
+                      Try Now
+                    </Link>
                   </a>
                 </div>
               </div>
-            </div>
+              
           </div>
 
-          <ModalVideo
-            thumb={VideoThumb}
-            thumbWidth={1104}
-            thumbHeight={576}
-            thumbAlt="Modal video thumbnail"
-            video="videos//video.mp4"
-            videoWidth={1920}
-            videoHeight={1080}
-          />
+          <div className="border-t py-8 [border-image:linear-gradient(to_right,transparent,theme(colors.slate.400/.25),transparent)1] md:py-20">
+              {/* Section header */}
+              <div className="mx-auto max-w-3xl pb-4 text-center md:pb-12">
+                <div className="inline-flex items-center gap-3 pb-3 before:h-px before:w-8 before:bg-gradient-to-r before:from-transparent before:to-indigo-200/50 after:h-px after:w-8 after:bg-gradient-to-l after:from-transparent after:to-indigo-200/50">
+                  <span className="inline-flex bg-gradient-to-r from-indigo-500 to-indigo-200 bg-clip-text text-transparent">
+                    Built from the CoolProp libary
+                  </span>
+                </div>
+                <h2 className="animate-[gradient_6s_linear_infinite] bg-[linear-gradient(to_right,theme(colors.gray.200),theme(colors.indigo.200),theme(colors.gray.50),theme(colors.indigo.300),theme(colors.gray.200))] bg-[length:200%_auto] bg-clip-text pb-4 font-nacelle text-3xl font-semibold text-transparent md:text-4xl">
+                  Advanced Equation of State Models
+                </h2>
+                <p className="text-lg text-indigo-200/65">
+                  The powerful CoolProp C++ library is used to calculate precise thermophysical properties. CoolProp provides equations of state for 122 pure fluids, making it an industry-leading tool for accurate fluid property predictions. Learn more about CoolProp and its extensive capabilities by visiting the official website:  
+                  <a href="http://www.coolprop.org" className="text-indigo-400 underline hover:text-indigo-600">
+                    www.coolprop.org
+                  </a>.
+                </p>
+                </div>
+              </div>
+
         </div>
       </div>
     </section>

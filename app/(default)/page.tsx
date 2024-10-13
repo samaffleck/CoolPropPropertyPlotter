@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Home - Open PRO",
+  title: "Thermophysical Property Plotter",
   description: "Page description",
 };
 
@@ -15,10 +15,6 @@ export default function Home() {
     <>
       <PageIllustration />
       <Hero />
-      <Workflows />
-      <Features />
-      <Testimonials />
-      <Cta />
     </>
   );
 }
