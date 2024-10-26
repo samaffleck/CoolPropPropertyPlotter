@@ -5,26 +5,27 @@ import Logo from "./logo";
 
 export default function Header() {
   return (
-    <header className="z-30 mt-2 w-full md:mt-2">
-      <div className="mx-auto max-w-8xl px-2 sm:px-2">
-        <div className="relative flex h-10 items-center justify-between gap-3 rounded-2xl bg-gray-900/90 px-3 before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit] before:border before:border-transparent before:[background:linear-gradient(to_right,theme(colors.gray.800),theme(colors.gray.700),theme(colors.gray.800))_border-box] before:[mask-composite:exclude_!important] before:[mask:linear-gradient(white_0_0)_padding-box,_linear-gradient(white_0_0)] after:absolute after:inset-0 after:-z-10 after:backdrop-blur-sm">
-          {/* Site branding */}
-          <div className="flex flex-1 items-center">
+    <header className="z-30 h-full w-48 fixed top-0 left-0 border-r border-gray-700">
+      <div className="flex flex-col h-full bg-black-800 shadow-lg">
+        {/* Site branding */}
+        <div className="w-full flex items-center justify-center border-b border-gray-700 py-6">
+          <div className="w-10 h-10 flex items-center justify-center">
             <Logo />
           </div>
-
-          {/* Desktop sign in links */}
-          <ul className="flex flex-1 items-center justify-end gap-3">
-            <li>
-              <Link
-                href="/propertyplotter"
-                className="btn-sm bg-gradient-to-t from-indigo-600 to-indigo-500 bg-[length:100%_100%] bg-[bottom] py-[3px] text-white shadow-[inset_0px_1px_0px_0px_theme(colors.white/.16)] hover:bg-[length:100%_150%]"
-              >
-                Try Now
-              </Link>
-            </li>
-          </ul>
         </div>
+
+        {/* Navigation links */}
+        <ul className="flex flex-col flex-1 items-center w-full mt-4">
+          <li className="w-full">
+            <Link
+              href="/propertyplotter"
+              className="block w-full text-center py-3 font-semibold text-gray-100 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 border-t border-b border-gray-700 transition-all hover:text-white"
+            >
+              Try ThermoPlot
+            </Link>
+          </li>
+          {/* Additional links can be added here */}
+        </ul>
       </div>
     </header>
   );

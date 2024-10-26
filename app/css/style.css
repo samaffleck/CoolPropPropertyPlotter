@@ -5,3 +5,53 @@
 @import "additional-styles/utility-patterns.css";
 @import "additional-styles/theme.css";
 @import "tailwindcss/utilities";
+/* Slider container */
+.slick-slider {
+    position: relative;
+    display: block;
+    box-sizing: border-box;
+    user-select: none;
+    touch-action: pan-y;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  /* Slide */
+  .slick-slide {
+    /* display: block; Uncomment this if images still aren't showing */
+    float: left;
+    height: 100%;
+    min-height: 1px;
+  }
+  .slick-slide img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  
+  /* Dots */
+  .slick-dots {
+    position: absolute;
+    bottom: 10px;
+    display: flex;
+    justify-content: center;
+    list-style: none;
+  }
+  .slick-dots li {
+    margin: 0 5px;
+  }
+  .slick-dots li button {
+    font-size: 0;
+    background-color: #d1d5db; /* gray-400 */
+    border-radius: 50%;
+    width: 10px;
+    height: 10px;
+  }
+  .slick-dots li.slick-active button {
+    background-color: #6366f1; /* indigo-500 */
+  }
+  
+  /* Hide Arrows */
+  .slick-prev, .slick-next {
+    display: none !important; /* Hide arrows as per your requirements */
+  }
+  

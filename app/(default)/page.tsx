@@ -1,6 +1,8 @@
 export const metadata = {
-  title: "Thermophysical Property Plotter",
-  description: "Page description",
+  title: "ThermoPlot",
+  description: "ThermoPlot is a interactive graphical calculator for plotting \
+  thermophysical and thermodynamic data for pure fluids. Simply select a fluid \
+  and visualise the temperature-entropy and pressure-enthalpy diagrams.",
 };
 
 import PageIllustration from "@/components/page-illustration";
@@ -11,7 +13,6 @@ import Cta from "@/components/cta";
 export default function Home() {
   return (
     <>
-      <PageIllustration />
       <Hero />
     </>
   );

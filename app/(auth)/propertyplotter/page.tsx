@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Property Plotter",
+  title: "ThermoPlot",
   description: "Web tool for plotting thermophysical properties of fluid systems.",
 };
 
@@ -7,7 +7,7 @@ import Link from "next/link";
 
 export default function PropertyPlotter() {
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen ml-48"> {/* Add left margin for sidebar space */}
 
       {/* Main Content - Property Plotter */}
       <main className="flex-grow mt-1">
@@ -19,12 +19,7 @@ export default function PropertyPlotter() {
         ></iframe>
       </main>
 
-      {/* Footer */}
-      <footer className="bg-gray-800 text-white p-2 text-center flex-shrink-0">
-        <div className="container mx-auto">
-          <p>© 2024 CoolProp Thermophysical Property Plotter</p>
-        </div>
-      </footer>
     </div>
   );
 }
+
