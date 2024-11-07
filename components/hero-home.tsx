@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Image from "next/image";
 import ToolDemoImg from "@/public/images/tool_demo.svg";
 import ToolDemoImg2 from "@/public/images/tool_demo2.png";
+import ToolDemoImg3 from "@/public/images/Ethylene_Example.png";
 import Link from "next/link";
 import Slider from "react-slick";
 
@@ -32,7 +33,7 @@ export default function HeroHome() {
   };
 
   return (
-    <section className="ml-48 bg-black-800"> {/* Updated background color to match sidebar */}
+    <section className="ml-28 bg-black-800"> {/* Updated background color to match sidebar */}
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         {/* Hero content */}
         <div className="py-12 md:py-20">
@@ -42,7 +43,7 @@ export default function HeroHome() {
               className="animate-[gradient_6s_linear_infinite] bg-[linear-gradient(to_right,theme(colors.gray.200),theme(colors.indigo.200),theme(colors.gray.50),theme(colors.indigo.300),theme(colors.gray.200))] bg-[length:200%_auto] bg-clip-text pb-5 font-nacelle text-4xl font-semibold text-transparent md:text-5xl"
               data-aos="fade-up"
             >
-              Thermophysical Properties of Fluids
+              ThermoPlot
             </h1>
             <div className="mx-auto max-w-3xl">
               <p
@@ -50,17 +51,19 @@ export default function HeroHome() {
                 data-aos="fade-up"
                 data-aos-delay={200}
               >
-                Plot the thermophysical properties of pure fluids from your browser.
+                Interactive Temperature-Entropy Diagrams for Engineers  
               </p>
 
               {/* Image Slider */}
               <div>
                 <Image
                   className="max-w-none"
-                  src={ToolDemoImg2}
+                  src={ToolDemoImg3}
                   width={760}
-                  height={465}
+                  height={438}
                   alt="Tool demo"
+                  quality={100}
+                  layout="intrinsic"
                 />
               </div>
               <div className="flex justify-center pb-4 md:pb-16" data-aos="fade-up">
