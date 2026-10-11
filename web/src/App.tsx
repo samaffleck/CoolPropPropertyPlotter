@@ -101,7 +101,7 @@ function Editor({ onHome }: { onHome: () => void }) {
             aria-valuemax={Math.floor(maxSidebarWidth())}
             aria-valuenow={sidebarWidth}
             tabIndex={0}
-            className="hidden w-1.5 shrink-0 cursor-col-resize touch-none bg-line/70 transition-colors hover:bg-accent/60 focus:bg-accent/60 lg:order-2 lg:block"
+            className="after:content-[''] relative hidden w-2 shrink-0 cursor-col-resize touch-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-line/70 after:transition-colors hover:after:bg-accent/60 focus:after:bg-accent/60 lg:order-2 lg:block"
             onKeyDown={(e) => {
               if (e.key === "ArrowLeft") setSidebarWidth((width) => Math.max(240, width - 16));
               if (e.key === "ArrowRight") setSidebarWidth((width) => Math.min(maxSidebarWidth(), width + 16));
