@@ -46,8 +46,6 @@ export interface Theme {
   surface: string;
   text: string;
   textMuted: string;
-  grid: string;
-  gridMinor: string;
   axis: string;
   font: string;
 }
@@ -145,25 +143,6 @@ export class Renderer {
 
     const xt = ticks(ax, o.xUnit, plot.x1 - plot.x0);
     const yt = ticks(ay, o.yUnit, plot.y1 - plot.y0);
-
-    // Grid
-    ctx.lineWidth = 1;
-    for (const t of xt) {
-      const px = Math.round(ax.toPx(t.value)) + 0.5;
-      ctx.strokeStyle = t.label ? theme.grid : theme.gridMinor;
-      ctx.beginPath();
-      ctx.moveTo(px, plot.y0);
-      ctx.lineTo(px, plot.y1);
-      ctx.stroke();
-    }
-    for (const t of yt) {
-      const py = Math.round(ay.toPx(t.value)) + 0.5;
-      ctx.strokeStyle = t.label ? theme.grid : theme.gridMinor;
-      ctx.beginPath();
-      ctx.moveTo(plot.x0, py);
-      ctx.lineTo(plot.x1, py);
-      ctx.stroke();
-    }
 
     // Data
     ctx.save();

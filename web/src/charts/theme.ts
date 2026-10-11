@@ -17,8 +17,6 @@ function read(): ChartTheme {
     surface: v("--surface"),
     text: v("--text"),
     textMuted: v("--text-2"),
-    grid: v("--grid"),
-    gridMinor: v("--grid-minor"),
     axis: v("--axis"),
     font: "Inter, ui-sans-serif, system-ui, sans-serif",
     iso: { P: v("--iso-P"), T: v("--iso-T"), S: v("--iso-S"), H: v("--iso-H"), D: v("--iso-D"), Q: v("--iso-Q") },
