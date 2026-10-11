@@ -63,7 +63,7 @@ function Sidebar({ width }: { width: number }) {
   const setMode = useStore((s) => s.setMode);
   const { infoError } = useData();
   return (
-    <aside style={{ "--sidebar-width": `${width}px` } as CSSProperties} className="order-2 flex w-full shrink-0 flex-col border-line bg-surface lg:order-1 lg:min-h-0 lg:w-[var(--sidebar-width)] lg:border-r">
+    <aside style={{ "--sidebar-width": `${width}px` } as CSSProperties} className="order-2 flex w-full shrink-0 flex-col border-line bg-surface lg:order-1 lg:min-h-0 lg:w-[var(--sidebar-width)]">
       <nav className="flex h-12 shrink-0 items-center gap-1 border-b border-line p-2" aria-label="Mode">
         {MODES.map(({ id, label, icon }) => (
           <button key={id} onClick={() => setMode(id)} aria-current={mode === id} title={label} className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-[13px] transition-colors ${mode === id ? "bg-surface-2 text-ink" : "text-ink-3 hover:bg-surface-2 hover:text-ink"}`}>
