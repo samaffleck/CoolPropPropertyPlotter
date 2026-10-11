@@ -1,5 +1,6 @@
 .DS_Store
 core/build/
+/build/
 web/node_modules/
 web/dist/
 *.tsbuildinfo
