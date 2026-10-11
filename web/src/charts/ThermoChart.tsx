@@ -332,14 +332,8 @@ export function ThermoChart() {
           const { x, y } = r.axes(viewRef.current);
           const px = Math.max(MARGIN.left, Math.min(r.width - MARGIN.right, pos.px));
           const py = Math.max(MARGIN.top, Math.min(r.height - MARGIN.bottom, pos.py));
-          const hasConnectedPath = scene.lines.some((line) => line.connectedPointIds?.includes(pointDrag!.id));
-          const snapped = r.snapToLine(
-            { px, py },
-            scene,
-            viewRef.current,
-            10,
-            hasConnectedPath ? (line) => line.connectedPointIds?.includes(pointDrag!.id) === true : undefined,
-          );
+          const isConnected = scene.lines.some((line) => line.connectedPointIds?.includes(pointDrag!.id));
+          const snapped = isConnected ? null : r.snapToLine({ px, py }, scene, viewRef.current);
           const xValue = snapped?.x ?? x.fromPx(px);
           const yValue = snapped?.y ?? y.fromPx(py);
           const preview = pointDrag.marker.point.slice();
