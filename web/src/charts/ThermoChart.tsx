@@ -1,8 +1,8 @@
-import { Download, Maximize2, RotateCcw, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Download, Maximize2, Trash2, X } from "lucide-react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { engine } from "../engine/client";
 import { curveValue, statePoint } from "../engine/curve";
-import { ProcessKind, Prop, type ProcessSpec, type StateInput, type ThermoState, type Viewport } from "../engine/types";
+import { Prop, type StateInput, type Viewport } from "../engine/types";
 import { computePointState, useIsolines } from "../state/compute";
 import { useData } from "../state/data";
 import type { PointResult } from "../state/compute";
@@ -14,9 +14,11 @@ import { MARGIN, Renderer } from "./renderer";
 import { buildScene, familyColor } from "./scene";
 import { useChartTheme } from "./theme";
 import { Select } from "../components/ui";
-import { PROCESS_KINDS } from "../panels/ProcessPanel";
+import { FluidPicker } from "../components/FluidPicker";
+import { UnitsMenu } from "../components/Header";
 
 const axisTitle = (prop: Prop, unitLabel: string) => `${COORDINATES[prop].label}, ${COORDINATES[prop].symbol} [${unitLabel}]`;
+const valuesPanelClass = "absolute right-6 top-5 z-10 w-64 max-w-[calc(100%-2rem)] rounded-xl border border-line bg-surface/95 p-3 shadow-xl backdrop-blur";
 
 function setCoordinate(point: Float64Array, prop: Prop, value: number) {
   switch (prop) {
@@ -37,7 +39,7 @@ function pointFromCoordinates(xProp: Prop, xValue: number, yProp: Prop, yValue: 
   return point;
 }
 
-export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boolean; onToggleResults: () => void }) {
+export function ThermoChart() {
   const fluid = useStore((s) => s.fluid);
   const chartId = useStore((s) => s.chartId);
   const setChart = useStore((s) => s.setChart);
@@ -46,13 +48,12 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
   const familiesByChart = useStore((s) => s.families);
   const toggleFamily = useStore((s) => s.toggleFamily);
   const units = useStore((s) => s.units);
-  const density = useStore((s) => s.density);
   const mode = useStore((s) => s.mode);
+  const statePoints = useStore((s) => s.points);
   const addPoint = useStore((s) => s.addPoint);
+  const clearPoints = useStore((s) => s.clearPoints);
   const updatePoint = useStore((s) => s.updatePoint);
   const removePoint = useStore((s) => s.removePoint);
-  const removeChain = useStore((s) => s.removeChain);
-  const addChain = useStore((s) => s.addChain);
   const cycleId = useStore((s) => s.cycleId);
   const selectedPointId = useStore((s) => s.selectedPointId);
   const setSelectedPointId = useStore((s) => s.setSelectedPoint);
@@ -62,27 +63,43 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
   const theme = useChartTheme();
   const storedView = views[chartId];
   const families = (familiesByChart[chartId] ?? []).filter((f) => chart.families.includes(f));
-  const iso = useIsolines(fluid, storedView, families, units, density);
+  const iso = useIsolines(fluid, storedView, families, units);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const draggedMarkerRef = useRef<{ id: string; point: Float64Array; input?: StateInput } | null>(null);
   const pendingPointsRef = useRef(new Map<string, { point: Float64Array; label: string }>());
-  const linePreviewRef = useRef<Float64Array | null>(null);
   const viewRef = useRef<Viewport | undefined>(storedView);
   const hoverRef = useRef<{ px: number; py: number } | null>(null);
   const frame = useRef(0);
   const drawRef = useRef<() => void>(() => {});
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedPointCardRef = useRef<HTMLElement | null>(null);
-  const [drawKind, setDrawKind] = useState<ProcessKind | null>(null);
   const [readout, setReadout] = useState<{ x: number; y: number; line?: { label: string; color: string } } | null>(null);
+  const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
   const selectedPoint = data.points.find(({ point }) => point.id === selectedPointId);
+  const selectedPointRecord = statePoints.find((point) => point.id === selectedPointId);
+  const selectedPointForCard = selectedPoint ?? (selectedPointRecord ? { point: selectedPointRecord, state: null } : undefined);
+  const hoveredPoint = data.points.find(({ point }) => point.id === hoveredPointId);
 
   useEffect(() => {
-    if (selectedPointId && !data.points.some(({ point }) => point.id === selectedPointId)) setSelectedPointId(null);
-  }, [data.points, selectedPointId]);
+    if (selectedPointId && !data.points.some(({ point }) => point.id === selectedPointId) && !statePoints.some((point) => point.id === selectedPointId)) {
+      setSelectedPointId(null);
+    }
+  }, [data.points, selectedPointId, setSelectedPointId, statePoints]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Delete" && event.key !== "Backspace") return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']"))) return;
+      if (!selectedPointId || !data.points.some(({ point }) => point.id === selectedPointId)) return;
+      event.preventDefault();
+      removePoint(selectedPointId);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [data.points, removePoint, selectedPointId]);
   useEffect(() => {
     if (!selectedPoint?.state) return;
     const card = selectedPointCardRef.current;
@@ -128,9 +145,8 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
     const vp = viewRef.current;
     if (!r || !vp) return;
     const preview = draggedMarkerRef.current;
-    const previewLine = linePreviewRef.current;
     const pendingPoints = pendingPointsRef.current;
-    const frameScene = preview || previewLine || pendingPoints.size > 0
+    const frameScene = preview || pendingPoints.size > 0
       ? {
           ...scene,
           markers: [
@@ -163,7 +179,6 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
               }
               return { ...line, data };
             }),
-            ...(previewLine ? [{ data: previewLine, color: theme.accent, width: 2, dash: [4, 3] }] : []),
           ],
         }
       : scene;
@@ -181,14 +196,14 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
   drawRef.current = draw;
 
   const schedule = useCallback(() => {
-    if (!frame.current) frame.current = requestAnimationFrame(draw);
-  }, [draw]);
+    if (!frame.current) frame.current = requestAnimationFrame(() => drawRef.current());
+  }, []);
 
   useEffect(() => {
     viewRef.current = storedView;
     schedule();
   }, [storedView, schedule]);
-  useEffect(schedule, [schedule]);
+  useEffect(() => schedule(), [draw, schedule]);
   useEffect(() => {
     const preview = draggedMarkerRef.current;
     if (!preview?.input) return;
@@ -270,22 +285,9 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
     };
 
     const pointers = new Map<number, { px: number; py: number }>();
-    let recentClickActions: Array<{ kind: "point" | "chain"; id: string }> = [];
+    let recentClickActions: string[] = [];
     let drag: { px: number; py: number; vp: Viewport; moved: boolean } | null = null;
     let pointDrag: { id: string; marker: (typeof scene.markers)[number]; moved: boolean; input?: StateInput; last: { px: number; py: number } } | null = null;
-    let lineDrag: {
-      kind: ProcessKind;
-      startPoint: Float64Array;
-      startInput: StateInput;
-      startState?: ThermoState;
-      startMarkerId?: string;
-      start: { px: number; py: number };
-      moved: boolean;
-      endPoint?: Float64Array;
-      endInput?: StateInput;
-      endState?: ThermoState;
-      endMarkerId?: string;
-    } | null = null;
     let pinch: { d: number; vp: Viewport; mx: number; my: number } | null = null;
     const findPoint = (pos: { px: number; py: number }, vp: Viewport) => {
       const r = rendererRef.current;
@@ -317,34 +319,10 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
         pinch = { d: Math.hypot(a.px - b.px, a.py - b.py), vp, mx: (a.px + b.px) / 2, my: (a.py + b.py) / 2 };
         drag = null;
         pointDrag = null;
-        lineDrag = null;
         draggedMarkerRef.current = null;
-        linePreviewRef.current = null;
       } else {
         const marker = findPoint(pos, vp);
-        if (drawKind !== null && region(pos.px, pos.py) === "plot") {
-          const snapped = marker ? null : rendererRef.current?.snapToLine(pos, scene, vp);
-          const { x, y } = rendererRef.current!.axes(vp);
-          const xValue = marker ? curveValue(marker.point, 0, chart.x) : snapped?.x ?? x.fromPx(pos.px);
-          const yValue = marker ? curveValue(marker.point, 0, chart.y) : snapped?.y ?? y.fromPx(pos.py);
-          const pointResult = marker?.id ? data.points.find(({ point }) => point.id === marker.id) : undefined;
-          const startInput = pointResult?.point.input ?? { a: chart.x, va: xValue, b: chart.y, vb: yValue };
-          const startPoint = marker?.point ?? pointFromCoordinates(chart.x, xValue, chart.y, yValue);
-          lineDrag = {
-            kind: drawKind,
-            startPoint,
-            startInput,
-            startState: pointResult?.state ?? undefined,
-            startMarkerId: marker?.id,
-            start: pos,
-            moved: false,
-          };
-          drag = null;
-          pointDrag = null;
-          linePreviewRef.current = null;
-          setSelectedPointId(null);
-          canvas.style.cursor = "grabbing";
-        } else if (marker?.id) {
+        if (marker?.id) {
           pointDrag = { id: marker.id, marker, moved: false, last: pos };
           drag = null;
           canvas.style.cursor = "grabbing";
@@ -359,38 +337,6 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       const r = rendererRef.current;
       const pos = local(e);
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, pos);
-      if (lineDrag && r && viewRef.current) {
-        if (Math.hypot(pos.px - lineDrag.start.px, pos.py - lineDrag.start.py) > 4) lineDrag.moved = true;
-        if (lineDrag.moved) {
-          const vp = viewRef.current;
-          const px = Math.max(MARGIN.left, Math.min(r.width - MARGIN.right, pos.px));
-          const py = Math.max(MARGIN.top, Math.min(r.height - MARGIN.bottom, pos.py));
-          const marker = findPoint({ px, py }, vp);
-          const existing = marker?.id && marker.id !== lineDrag.startMarkerId
-            ? data.points.find(({ point }) => point.id === marker.id)
-            : undefined;
-          const snapped = existing ? null : r.snapToLine({ px, py }, scene, vp);
-          const { x, y } = r.axes(vp);
-          const xValue = existing ? curveValue(existing.state ? statePoint(existing.state) : marker!.point, 0, chart.x) : snapped?.x ?? x.fromPx(px);
-          const yValue = existing ? curveValue(existing.state ? statePoint(existing.state) : marker!.point, 0, chart.y) : snapped?.y ?? y.fromPx(py);
-          const endPoint = existing?.state
-            ? statePoint(existing.state)
-            : marker && existing
-              ? marker.point
-              : pointFromCoordinates(chart.x, xValue, chart.y, yValue);
-          lineDrag.endPoint = endPoint;
-          lineDrag.endInput = existing?.point.input ?? { a: chart.x, va: xValue, b: chart.y, vb: yValue };
-          lineDrag.endState = existing?.state ?? undefined;
-          lineDrag.endMarkerId = existing?.point.id;
-          const path = new Float64Array(12);
-          path.set(lineDrag.startPoint);
-          path.set(endPoint, 6);
-          linePreviewRef.current = path;
-          canvas.style.cursor = existing ? "copy" : "crosshair";
-          schedule();
-        }
-        return;
-      }
       if (pointDrag && r && viewRef.current) {
         const dx = pos.px - pointDrag.last.px;
         const dy = pos.py - pointDrag.last.py;
@@ -408,6 +354,7 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
           setCoordinate(preview, chart.y, yValue);
           pointDrag.input = { a: chart.x, va: xValue, b: chart.y, vb: yValue };
           draggedMarkerRef.current = { id: pointDrag.id, point: preview, input: pointDrag.input };
+          setHoveredPointId(null);
           hoverRef.current = null;
           setReadout(null);
           schedule();
@@ -434,6 +381,7 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
           [next.xMin, next.xMax] = x.panned(dx);
           [next.yMin, next.yMax] = y.panned(dy);
           hoverRef.current = null;
+          setHoveredPointId(null);
           setReadout(null);
           updateView(next);
           return;
@@ -442,24 +390,30 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       // Hover readout.
       const vp = viewRef.current;
       if (!vp || !r) return;
-      if (e.pointerType !== "touch") canvas.style.cursor = findPoint(pos, vp) ? "grab" : "crosshair";
-      if (e.pointerType === "touch") return;
+      const marker = e.pointerType === "touch" ? null : findPoint(pos, vp);
+      if (e.pointerType !== "touch") canvas.style.cursor = marker ? "grab" : "crosshair";
+      if (e.pointerType === "touch") {
+        setHoveredPointId(null);
+        return;
+      }
       if (region(pos.px, pos.py) !== "plot" || pos.px > r.width - MARGIN.right || pos.py < MARGIN.top) {
+        setHoveredPointId(null);
         hoverRef.current = null;
         setReadout(null);
         schedule();
         return;
       }
+      setHoveredPointId(marker?.id ?? null);
       const { x, y } = r.axes(vp);
       const snapped = r.snapToLine(pos, scene, vp);
-      const hoverPos = snapped ? { px: snapped.px, py: snapped.py } : pos;
-      const xValue = snapped?.x ?? x.fromPx(pos.px);
-      const yValue = snapped?.y ?? y.fromPx(pos.py);
-      hoverRef.current = hoverPos;
+      const line = snapped?.label && snapped.labelColor ? { label: snapped.label, color: snapped.labelColor } : undefined;
+      const xValue = x.fromPx(pos.px);
+      const yValue = y.fromPx(pos.py);
+      hoverRef.current = line ? null : snapped ? { px: snapped.px, py: snapped.py } : pos;
       setReadout({
         x: xValue,
         y: yValue,
-        line: snapped?.label && snapped.labelColor ? { label: snapped.label, color: snapped.labelColor } : undefined,
+        line,
       });
       schedule();
     };
@@ -468,67 +422,6 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       if (pointers.size < 2) pinch = null;
       const r = rendererRef.current;
       const vp = viewRef.current;
-      if (lineDrag) {
-        const completed = lineDrag;
-        lineDrag = null;
-        linePreviewRef.current = null;
-        canvas.style.cursor = "crosshair";
-        schedule();
-        if (completed.moved && completed.endInput && completed.endPoint) {
-          void (async () => {
-            const startResult = completed.startState
-              ? { ok: true as const, state: completed.startState }
-              : await engine.state(fluid, completed.startInput);
-            if (!startResult.ok) return;
-            const endResult = completed.endState
-              ? { ok: true as const, state: completed.endState }
-              : await engine.state(fluid, completed.endInput!);
-            if (!endResult.ok) return;
-
-            const definition = PROCESS_KINDS.find(({ kind }) => kind === completed.kind);
-            if (!definition) return;
-            const startState = startResult.state;
-            const desiredEnd = endResult.state;
-            const candidates = definition.targets.filter((prop) =>
-              Number.isFinite(stateValue(startState, prop)) && Number.isFinite(stateValue(desiredEnd, prop)),
-            );
-            const changesChartAxis = (prop: Prop) =>
-              Math.abs(stateValue(desiredEnd, prop) - stateValue(startState, prop)) > Math.max(1e-9, Math.abs(stateValue(startState, prop)) * 1e-8);
-            const target = candidates.find((prop) => (prop === chart.x || prop === chart.y) && changesChartAxis(prop))
-              ?? candidates.find(changesChartAxis)
-              ?? candidates[0];
-            if (target === undefined) return;
-
-            const efficiency = completed.kind === ProcessKind.Compression ? 0.8
-              : completed.kind === ProcessKind.Expansion ? 0.85
-              : undefined;
-            const spec: ProcessSpec = {
-              kind: completed.kind,
-              target,
-              value: stateValue(desiredEnd, target),
-              ...(efficiency === undefined ? {} : { efficiency }),
-            };
-            const calculated = await engine.process(fluid, completed.startInput, spec);
-            if (!calculated.ok) return;
-
-            // A dropped endpoint on a pinned state only counts as a snap if the selected
-            // process actually reaches that state in the current chart coordinates.
-            if (completed.endMarkerId) {
-              const actual = statePoint(calculated.end);
-              const expected = statePoint(desiredEnd);
-              const matches = (prop: Prop) => {
-                const a = curveValue(actual, 0, prop);
-                const b = curveValue(expected, 0, prop);
-                return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= Math.max(1e-7, Math.abs(b) * 1e-5);
-              };
-              if (!matches(chart.x) || !matches(chart.y)) return;
-            }
-            addChain(completed.startInput, spec);
-            setSelectedPointId(null);
-          })().catch(() => {});
-        }
-        return;
-      }
       if (pointDrag) {
         const completed = pointDrag;
         pointDrag = null;
@@ -567,8 +460,11 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
             label: point.label,
           });
         }
+        setHoveredPointId(null);
+        hoverRef.current = null;
+        setReadout(null);
         setSelectedPointId(id);
-        recentClickActions.push({ kind: "point", id });
+        recentClickActions.push(id);
         schedule();
         if (clickTimer.current) clearTimeout(clickTimer.current);
         clickTimer.current = setTimeout(() => {
@@ -580,6 +476,7 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
     };
     const onLeave = () => {
       hoverRef.current = null;
+      setHoveredPointId(null);
       setReadout(null);
       schedule();
     };
@@ -587,13 +484,9 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       e.preventDefault();
       if (clickTimer.current) clearTimeout(clickTimer.current);
       clickTimer.current = null;
-      for (const action of recentClickActions) {
-        if (action.kind === "point") {
-          removePoint(action.id);
-          pendingPointsRef.current.delete(action.id);
-        } else {
-          removeChain(action.id);
-        }
+      for (const id of recentClickActions) {
+        removePoint(id);
+        pendingPointsRef.current.delete(id);
       }
       recentClickActions = [];
       setSelectedPointId(null);
@@ -617,17 +510,24 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       canvas.removeEventListener("pointerleave", onLeave);
       canvas.removeEventListener("dblclick", onDouble);
     };
-  }, [updateView, schedule, chart, chartId, addPoint, addChain, updatePoint, removePoint, removeChain, setView, scene, mode, fluid, drawKind, data.points]);
+  }, [updateView, schedule, chart, chartId, addPoint, updatePoint, removePoint, setView, scene, mode, fluid, data.points]);
 
   // ---- fit to overlay content ----
   const fit = useCallback(() => {
     const vp = viewRef.current;
     if (!vp) return;
     const pts: Float64Array[] = [];
+    if (data.saturation) {
+      for (let offset = 0; offset < data.saturation.dome.length; offset += 6) {
+        pts.push(data.saturation.dome.subarray(offset, offset + 6));
+      }
+    }
     if (data.cycle) data.cycle.states.forEach((s) => pts.push(statePoint(s.state)));
     data.chains.forEach((c) => {
       if (c.start) pts.push(statePoint(c.start));
-      c.steps.forEach((s) => s.result && pts.push(statePoint(s.result.end)));
+      c.steps.forEach((s) => {
+        if (s.result) pts.push(statePoint(s.result.start), statePoint(s.result.end));
+      });
     });
     data.points.forEach((p) => p.state && pts.push(statePoint(p.state)));
     const xs = pts.map((p) => curveValue(p, 0, chart.x)).filter(Number.isFinite);
@@ -689,6 +589,7 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-line px-3 py-1.5">
+        <FluidPicker />
         <Select
           className="w-24"
           label="Chart type"
@@ -696,15 +597,6 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
           onChange={setChart}
           options={CHARTS.map((c) => ({ value: c.id, label: c.label }))}
         />
-        {
-          <Select
-            className="w-36 shrink-0"
-            label="Draw connection"
-            value={drawKind ?? ""}
-            onChange={(kind) => setDrawKind(kind === "" ? null : kind as ProcessKind)}
-            options={[{ value: "" as const, label: "Draw connection…" }, ...PROCESS_KINDS.map(({ kind, label, group }) => ({ value: kind, label, group }))]}
-          />
-        }
         <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
         <div className="flex flex-wrap items-center gap-0.5" role="group" aria-label="Isoline families">
           {chart.families.map((f) => {
@@ -729,91 +621,83 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-x-1 gap-y-1 border-l border-line pl-2">
           <button
-            onClick={() => setView(chartId, undefined)}
-            aria-label="Reset view"
-            className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink"
+            onClick={() => {
+              clearPoints();
+              pendingPointsRef.current.clear();
+              draggedMarkerRef.current = null;
+              schedule();
+            }}
+            title="Clear all points"
+            aria-label="Clear all points"
+            disabled={statePoints.length === 0}
+            className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
           >
-            <RotateCcw size={16} />
+            <Trash2 size={16} />
           </button>
           <button
             onClick={fit}
+            title="Fit to content"
             aria-label="Fit to content"
             className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink"
           >
             <Maximize2 size={16} />
           </button>
-          <label className="inline-flex items-center gap-1.5 px-1.5 py-1 text-[13px] text-ink-2" htmlFor="line-density">
-            Density
-            <select
-              id="line-density"
-              className="rounded border border-line bg-surface px-1.5 py-1 text-[13px] text-ink"
-              value={density}
-              onChange={(e) => useStore.getState().setDensity(Number(e.target.value))}
-            >
-              {[6, 10, 16].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </label>
           <button
             onClick={exportPng}
+            title="Export PNG"
             aria-label="Export PNG"
             className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink"
           >
             <Download size={16} />
           </button>
+          <UnitsMenu />
         </div>
-        <div className="flex items-center gap-1">
-          {iso.loading && <span className="mr-1 text-[11px] text-ink-3" aria-label="Computing isolines">···</span>}
-          <button onClick={onToggleResults} aria-expanded={resultsOpen} className={`rounded-md px-2.5 py-1.5 text-xs ${resultsOpen ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink"}`}>
-            Results
-          </button>
-        </div>
+        {iso.loading && <span className="text-[11px] text-ink-3" aria-label="Computing isolines">···</span>}
       </div>
-      <div ref={containerRef} className="relative min-h-0 flex-1 touch-none select-none">
+      <div ref={containerRef} className="relative min-h-0 flex-1 select-none">
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 cursor-crosshair"
+          className="absolute inset-0 touch-none cursor-crosshair"
           aria-label={`${chart.title} chart for ${fluid}`}
           role="img"
         />
-        {selectedPoint?.state && (
+        {selectedPointForCard ? (
           <SelectedPointCard
             cardRef={selectedPointCardRef}
-            point={selectedPoint}
+            point={selectedPointForCard}
             chart={chart}
             fluid={fluid}
             onClose={() => setSelectedPointId(null)}
-            onRemove={() => {
-              removePoint(selectedPoint.point.id);
-              setSelectedPointId(null);
-            }}
           />
-        )}
-        {readout && <Readout {...readout} chart={chart} />}
+        ) : hoveredPoint?.state ? (
+          <Readout x={0} y={0} chart={chart} point={hoveredPoint} />
+        ) : readout ? <Readout {...readout} chart={chart} /> : null}
       </div>
     </div>
   );
 }
 
-function SelectedPointCard({ cardRef, point, chart, fluid, onClose, onRemove }: {
+function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
   cardRef: React.RefObject<HTMLElement | null>;
   point: PointResult;
   chart: ReturnType<typeof chartById>;
   fluid: string;
   onClose: () => void;
-  onRemove: () => void;
 }) {
   const units = useStore((s) => s.units);
   const updatePoint = useStore((s) => s.updatePoint);
   const state = point.state!;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const fields = [
-    ["Temperature", Prop.T],
-    ["Pressure", Prop.P],
-    ["Enthalpy", Prop.H],
-    ["Entropy", Prop.S],
-    ["Density", Prop.D],
-  ] as const;
+  if (!point.state) {
+    return (
+      <ValueBox ref={cardRef} title={`State ${point.point.label}`} ariaLabel={`State ${point.point.label}`} onClose={onClose} interactive>
+        <div className="py-1.5 text-xs text-ink-3">Calculating state…</div>
+      </ValueBox>
+    );
+  }
+  const baseFields: Prop[] = [Prop.T, Prop.P, Prop.H, Prop.S, Prop.D, Prop.Q];
+  const fields = [...baseFields, ...[chart.x, chart.y].filter((prop) => !baseFields.includes(prop))];
   const commitValue = async (prop: Prop, displayValue: number) => {
     const unit = unitOf(units, COORDINATES[prop].quantity);
     const value = fromDisplay(unit, displayValue);
@@ -837,38 +721,66 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose, onRemove }: 
     }
   };
   return (
-    <section ref={cardRef} tabIndex={-1} className="absolute left-[76px] top-3 z-10 w-72 max-w-[calc(100%-88px)] rounded-xl border border-line bg-surface/95 p-3 shadow-xl backdrop-blur" aria-label={`State ${point.point.label}`}>
-      <div className="mb-2 flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="font-medium text-ink">State {point.point.label}</div>
-          <div className="text-xs capitalize text-ink-3">{state.phase}</div>
-        </div>
-        <button onClick={onRemove} title="Remove state" aria-label="Remove state" className="rounded p-1 text-ink-3 hover:bg-surface-2 hover:text-danger"><Trash2 size={14} /></button>
-        <button onClick={onClose} title="Close state details" aria-label="Close state details" className="rounded p-1 text-ink-3 hover:bg-surface-2 hover:text-ink"><X size={14} /></button>
-      </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-        {fields.map(([label, prop]) => {
+    <ValueBox ref={cardRef} title={`State ${point.point.label}`} ariaLabel={`State ${point.point.label}`} onClose={onClose} interactive>
+        {fields.map((prop) => {
+          const label = COORDINATES[prop].label;
           const unit = unitOf(units, COORDINATES[prop].quantity);
-          const displayValue = toDisplay(unit, stateValue(state, prop));
+          const rawValue = stateValue(state, prop);
+          const available = prop !== Prop.Q || (Number.isFinite(rawValue) && rawValue >= 0 && rawValue <= 1);
+          const displayValue = available ? toDisplay(unit, rawValue) : null;
           return (
-            <div key={label} className="min-w-0">
-              <div className="text-xs text-ink-3">{label}</div>
-              <div className="flex items-baseline gap-1 tabular text-ink">
-                <InlineEditableValue label={label} value={displayValue} disabled={saving} onCommit={(next) => commitValue(prop, next)} />
-                <span className="text-ink-3">{unit.label}</span>
-              </div>
-            </div>
+            <ValueRow key={label} label={label} unit={unit.label}>
+              {displayValue === null ? <span className="w-[9ch] text-right font-mono text-ink-3">—</span> : (
+                <InlineEditableValue label={label} value={displayValue} disabled={saving || !!point.point.generated || prop === Prop.Q && !available} onCommit={(next) => commitValue(prop, next)} />
+              )}
+            </ValueRow>
           );
         })}
-      </div>
-      {error ? (
-        <div role="status" className="mt-2 text-xs text-danger">{error}</div>
-      ) : saving ? (
-        <div role="status" className="mt-2 text-xs text-ink-3">Updating point…</div>
-      ) : (
-        <div className="mt-2 border-t border-line pt-2 text-xs text-ink-3">Click a value to edit it.</div>
+      {error && <div role="status" className="mt-2 text-xs text-danger">{error}</div>}
+      {saving && <div role="status" className="mt-2 text-xs text-ink-3">Updating point…</div>}
+    </ValueBox>
+  );
+}
+
+interface ValueBoxProps {
+  title?: string;
+  titleColor?: string;
+  ariaLabel: string;
+  onClose?: () => void;
+  interactive?: boolean;
+  children?: ReactNode;
+}
+
+const ValueBox = forwardRef<HTMLElement, ValueBoxProps>(function ValueBox({
+  title,
+  titleColor,
+  ariaLabel,
+  onClose,
+  interactive = false,
+  children,
+}, ref) {
+  return (
+    <section ref={ref} tabIndex={onClose ? -1 : undefined} className={`${interactive ? "pointer-events-auto" : "pointer-events-none"} ${valuesPanelClass} max-h-[calc(100%-2.5rem)] overflow-y-auto text-xs ${onClose ? "select-text outline-none" : ""}`} aria-label={ariaLabel}>
+      {(title || onClose) && (
+        <div className="flex items-start gap-2">
+          {title && <div className="min-w-0 flex-1 font-medium text-ink" style={titleColor ? { color: titleColor } : undefined}>{title}</div>}
+          {onClose && <button onClick={onClose} title="Close state details" aria-label="Close state details" className="rounded p-1 text-ink-3 hover:bg-surface-2 hover:text-ink"><X size={14} /></button>}
+        </div>
       )}
+      {children != null && <div className="mt-2 flex flex-col divide-y divide-line">{children}</div>}
     </section>
+  );
+});
+
+function ValueRow({ label, unit, children }: { label: string; unit: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
+      <div className="min-w-0 truncate text-xs text-ink-3">{label}</div>
+      <div className="flex items-baseline gap-1 tabular text-ink">
+        {children}
+        {unit && <span className="whitespace-nowrap text-ink-3">{unit}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -890,78 +802,87 @@ function InlineEditableValue({ label, value, disabled, onCommit }: {
 
   if (editing) {
     return (
-      <input
-        autoFocus
-        aria-label={`Edit ${label} value`}
-        inputMode="decimal"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => {
-          if (skipBlurRef.current) {
-            skipBlurRef.current = false;
-            return;
-          }
-          void commit();
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") {
-            skipBlurRef.current = true;
-            event.currentTarget.blur();
-            setEditing(false);
-          }
-        }}
-        className="w-[8ch] min-w-[5ch] max-w-full border-0 bg-transparent p-0 text-right font-mono text-ink outline-none focus-visible:underline focus-visible:decoration-accent"
-      />
+      <span className="inline-flex w-[9ch] shrink-0">
+        <input
+          autoFocus
+          aria-label={`Edit ${label} value`}
+          inputMode="decimal"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            if (skipBlurRef.current) {
+              skipBlurRef.current = false;
+              return;
+            }
+            void commit();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              skipBlurRef.current = true;
+              event.currentTarget.blur();
+              setEditing(false);
+            }
+          }}
+          className="w-full border-0 bg-transparent p-0 text-right font-mono text-ink outline-none focus-visible:underline focus-visible:decoration-accent"
+        />
+      </span>
     );
   }
 
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => {
-        setDraft(formatNumber(value, 4));
-        setEditing(true);
-      }}
-      className="cursor-text border-0 bg-transparent p-0 text-right font-mono text-ink decoration-accent underline-offset-2 hover:underline disabled:cursor-wait"
-      aria-label={`Edit ${label}`}
-    >
-      {formatNumber(value, 4)}
-    </button>
+    <span className="inline-flex w-[9ch] shrink-0">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          setDraft(formatNumber(value, 4));
+          setEditing(true);
+        }}
+        className="w-full cursor-text rounded-sm border-b border-dotted border-ink-3/60 bg-transparent px-0.5 text-right font-mono text-ink underline-offset-2 hover:border-accent hover:bg-accent/5 hover:text-accent disabled:cursor-wait"
+        aria-label={`Edit ${label}`}
+      >
+        {formatNumber(value, 4)}
+      </button>
+    </span>
   );
 }
 
-function Readout({ x, y, chart, line }: {
+function Readout({ x, y, chart, line, point }: {
   x: number;
   y: number;
   chart: ReturnType<typeof chartById>;
   line?: { label: string; color: string };
+  point?: PointResult;
 }) {
   const units = useStore((s) => s.units);
+  if (point?.state) {
+    const fields: Prop[] = [Prop.T, Prop.P, Prop.H, Prop.S, Prop.D, Prop.Q];
+    return (
+      <ValueBox title={`State ${point.point.label}`} ariaLabel={`State ${point.point.label}`}>
+        {fields.map((prop) => {
+          const meta = COORDINATES[prop];
+          const unit = unitOf(units, meta.quantity);
+          const rawValue = stateValue(point.state!, prop);
+          const value = prop !== Prop.Q || (Number.isFinite(rawValue) && rawValue >= 0 && rawValue <= 1)
+            ? formatNumber(toDisplay(unit, rawValue), 4)
+            : "—";
+          return <ValueRow key={prop} label={meta.label} unit={value === "—" ? "" : unit.label}><span className="w-[9ch] text-right font-mono text-ink">{value}</span></ValueRow>;
+        })}
+      </ValueBox>
+    );
+  }
   const xUnit = unitOf(units, COORDINATES[chart.x].quantity);
   const yUnit = unitOf(units, COORDINATES[chart.y].quantity);
   const rows: [string, number, string][] = [
-    [COORDINATES[chart.x].symbol, toDisplay(xUnit, x), xUnit.label],
-    [COORDINATES[chart.y].symbol, toDisplay(yUnit, y), yUnit.label],
+    [COORDINATES[chart.x].label, toDisplay(xUnit, x), xUnit.label],
+    [COORDINATES[chart.y].label, toDisplay(yUnit, y), yUnit.label],
   ];
   return (
-    <div
-      className="pointer-events-none absolute right-6 top-5 z-10 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs shadow-lg backdrop-blur"
-      aria-label="Cursor coordinates"
-    >
-      {line && <div className="mb-1 border-b border-line pb-1 font-medium" style={{ color: line.color }}>{line.label}</div>}
-      <table className="tabular">
-        <tbody>
-          {rows.map(([k, v, u]) => (
-            <tr key={k}>
-              <td className="pr-2 text-ink-3">{k}</td>
-              <td className="pr-1 text-right font-mono text-ink">{formatNumber(v, 5)}</td>
-              <td className="text-ink-3">{u}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ValueBox title={line?.label} titleColor={line?.color} ariaLabel={line ? `Cursor coordinates on ${line.label}` : "Cursor coordinates"}>
+      {rows.map(([label, value, unit]) => (
+        <ValueRow key={label} label={label} unit={unit}><span className="w-[9ch] text-right font-mono text-ink">{formatNumber(value, 5)}</span></ValueRow>
+      ))}
+    </ValueBox>
   );
 }

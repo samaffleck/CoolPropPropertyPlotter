@@ -52,34 +52,6 @@ export interface SceneInput {
   showOverlays: { points: boolean; chains: boolean; cycle: boolean };
 }
 
-function snapshotPath(connection: ExampleSnapshot["connections"][number], points: PointResult[]): Float64Array {
-  const path = new Float64Array(connection.path.map((value) => value === null ? Number.NaN : value));
-  if (path.length < 12) return path;
-  const from = points.find((result) => result.point.id === connection.fromPointId)?.state;
-  const to = points.find((result) => result.point.id === connection.toPointId)?.state;
-  if (!from || !to) return path;
-  const oldStart = path.slice(0, 6);
-  const oldEnd = path.slice(path.length - 6);
-  const newStart = statePoint(from);
-  const newEnd = statePoint(to);
-  const vertices = path.length / 6;
-  for (let vertex = 0; vertex < vertices; vertex++) {
-    const t = vertex / (vertices - 1);
-    for (let coordinate = 0; coordinate < 6; coordinate++) {
-      const offset = vertex * 6 + coordinate;
-      if (!Number.isFinite(path[offset])) continue;
-      const startDelta = Number.isFinite(oldStart[coordinate]) && Number.isFinite(newStart[coordinate])
-        ? newStart[coordinate] - oldStart[coordinate]
-        : 0;
-      const endDelta = Number.isFinite(oldEnd[coordinate]) && Number.isFinite(newEnd[coordinate])
-        ? newEnd[coordinate] - oldEnd[coordinate]
-        : 0;
-      path[offset] += (1 - t) * startDelta + t * endDelta;
-    }
-  }
-  return path;
-}
-
 export function buildScene(o: SceneInput): Scene {
   const { theme } = o;
   const lines: SceneLine[] = [];
@@ -118,26 +90,12 @@ export function buildScene(o: SceneInput): Scene {
     o.chains.forEach((c, ci) => {
       const color = theme.paths[ci % theme.paths.length];
       for (const st of c.steps) {
-        if (st.result) lines.push({ data: st.result.path, color, width: 2.5, arrows: true, emphasis: true });
+        if (!st.result) continue;
+        lines.push({ data: st.result.path, color, width: 2.5, arrows: true, emphasis: true });
+        markers.push({ point: statePoint(st.result.start), color });
+        markers.push({ point: statePoint(st.result.end), color });
       }
-      if (c.start) markers.push({ point: statePoint(c.start), color });
-      c.steps.forEach((st) => {
-        if (st.result) markers.push({ point: statePoint(st.result.end), color });
-      });
-    });
-  }
-
-  if (o.exampleSnapshot) {
-    o.exampleSnapshot.connections.forEach((connection, index) => {
-      lines.push({
-        data: snapshotPath(connection, o.points),
-        color: theme.paths[index % theme.paths.length],
-        width: 2.5,
-        arrows: true,
-        emphasis: true,
-        label: connection.component,
-        snapshotPointIds: [connection.fromPointId, connection.toPointId],
-      });
+      if (c.start && !c.chain.steps.some((st) => st.fromPointId && st.toPointId)) markers.push({ point: statePoint(c.start), color });
     });
   }
 

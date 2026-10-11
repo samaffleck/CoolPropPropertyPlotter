@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ThermoChart } from "./charts/ThermoChart";
 import { Header } from "./components/Header";
-import { CyclePanel } from "./panels/CyclePanel";
-import { ExplorePanel } from "./panels/ExplorePanel";
 import { ProcessPanel } from "./panels/ProcessPanel";
-import { ResultsPanel } from "./panels/ResultsPanel";
 import { DataProvider, useData } from "./state/data";
-import { useStore } from "./state/store";
 
 const GITHUB = "https://github.com/samaffleck/CoolPropPropertyPlotter";
 
@@ -59,8 +55,6 @@ function Sidebar({ width }: { width: number }) {
     <aside style={{ "--sidebar-width": `${width}px` } as CSSProperties} className="order-2 flex w-full shrink-0 flex-col border-line bg-surface lg:order-1 lg:min-h-0 lg:w-[var(--sidebar-width)]">
       <div className="min-h-0 flex-1 overflow-y-auto">
         {infoError && <div className="m-4 text-xs text-danger">Could not load fluid: {infoError}</div>}
-        <CyclePanel />
-        <ExplorePanel />
         <ProcessPanel />
       </div>
     </aside>
@@ -68,11 +62,8 @@ function Sidebar({ width }: { width: number }) {
 }
 
 function Editor({ onHome }: { onHome: () => void }) {
-  const mode = useStore((s) => s.mode);
-  const [resultsOpen, setResultsOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
-  useEffect(() => setResultsOpen(false), [mode]);
   return (
     <DataProvider>
       <div className="flex h-full flex-col">
@@ -106,13 +97,8 @@ function Editor({ onHome }: { onHome: () => void }) {
           />
           <main className="order-1 flex min-h-[55vh] min-w-0 flex-1 flex-col lg:order-3 lg:min-h-0">
             <div className="min-h-[55vh] min-w-0 flex-1 lg:min-h-0">
-              <ThermoChart resultsOpen={resultsOpen} onToggleResults={() => setResultsOpen((open) => !open)} />
+              <ThermoChart />
             </div>
-            {resultsOpen && (
-              <div className="h-56 shrink-0 border-t border-line lg:h-52">
-                <ResultsPanel />
-              </div>
-            )}
           </main>
         </div>
       </div>

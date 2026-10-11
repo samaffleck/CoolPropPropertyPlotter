@@ -257,6 +257,26 @@ export class Renderer {
     ctx.strokeStyle = theme.axis;
     ctx.lineWidth = 1;
     ctx.strokeRect(plot.x0 + 0.5, plot.y0 + 0.5, plot.x1 - plot.x0 - 1, plot.y1 - plot.y0 - 1);
+    ctx.beginPath();
+    for (const t of xt) {
+      const px = Math.round(ax.toPx(t.value)) + 0.5;
+      if (px < plot.x0 || px > plot.x1) continue;
+      const length = t.label ? 5 : 3;
+      ctx.moveTo(px, plot.y0 + 0.5);
+      ctx.lineTo(px, plot.y0 + length + 0.5);
+      ctx.moveTo(px, plot.y1 + 0.5);
+      ctx.lineTo(px, plot.y1 - length + 0.5);
+    }
+    for (const t of yt) {
+      const py = Math.round(ay.toPx(t.value)) + 0.5;
+      if (py < plot.y0 || py > plot.y1) continue;
+      const length = t.label ? 5 : 3;
+      ctx.moveTo(plot.x0 + 0.5, py);
+      ctx.lineTo(plot.x0 + length + 0.5, py);
+      ctx.moveTo(plot.x1 + 0.5, py);
+      ctx.lineTo(plot.x1 - length + 0.5, py);
+    }
+    ctx.stroke();
     ctx.fillStyle = theme.textMuted;
     ctx.font = `400 11px ${theme.font}`;
     ctx.textAlign = "center";

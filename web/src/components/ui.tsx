@@ -175,9 +175,9 @@ export function IconButton({ label, onClick, children, className = "" }: { label
   );
 }
 
-export function Section({ title, actions, children }: { title: string; actions?: ReactNode; children?: ReactNode }) {
+export function Section({ title, actions, children, className = "" }: { title: string; actions?: ReactNode; children?: ReactNode; className?: string }) {
   return (
-    <section className="border-b border-line px-4 py-4">
+    <section className={`border-b border-line px-4 py-4 ${className}`}>
       <div className={`${children ? "mb-3" : ""} flex items-center justify-between`}>
         <h2 className="text-sm font-medium text-ink-2">{title}</h2>
         {actions}
