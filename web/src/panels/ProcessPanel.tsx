@@ -105,11 +105,13 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
 
   const addConnection = () => {
     if (points.length < 2) return;
-    const [from, to] = points;
+    const endpoints = nextConnectionEndpoints(points, chain.steps);
+    const to = endpoints ? points.find(({ point }) => point.id === endpoints.toPointId) : undefined;
+    const specPoint = to ?? points[1] ?? points[0];
     addStep(
       chain.id,
-      processSpecForEndpoints(ProcessKind.Isobaric, to.point.input),
-      { fromPointId: from.point.id, toPointId: to.point.id },
+      processSpecForEndpoints(ProcessKind.Isobaric, specPoint.point.input),
+      endpoints,
     );
   };
 
@@ -174,6 +176,36 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
       </Button>
     </section>
   );
+}
+
+function nextConnectionEndpoints(
+  points: (PointResult & { state: ThermoState })[],
+  steps: ProcessChain["steps"],
+): { fromPointId: string; toPointId: string } | undefined {
+  const assigned = new Set(steps.flatMap((step) => [step.fromPointId, step.toPointId].filter((id): id is string => !!id)));
+  const unassigned = points.filter(({ point }) => !assigned.has(point.id));
+  const existingPairs = new Set(steps.flatMap((step) => {
+    if (!step.fromPointId || !step.toPointId) return [];
+    return [`${step.fromPointId}:${step.toPointId}`, `${step.toPointId}:${step.fromPointId}`];
+  }));
+
+  // Extend a connected path from its open end when a fresh point is available.
+  const lastStep = steps[steps.length - 1];
+  const openEnd = lastStep?.fromPointId && lastStep.toPointId ? lastStep.toPointId : undefined;
+  if (openEnd) {
+    const next = unassigned.find(({ point }) => point.id !== openEnd && !existingPairs.has(`${openEnd}:${point.id}`));
+    if (next) return { fromPointId: openEnd, toPointId: next.point.id };
+  }
+
+  // Otherwise connect two points that are not part of another connection.
+  for (let i = 0; i < unassigned.length; i++) {
+    for (let j = i + 1; j < unassigned.length; j++) {
+      const fromPointId = unassigned[i].point.id;
+      const toPointId = unassigned[j].point.id;
+      if (!existingPairs.has(`${fromPointId}:${toPointId}`)) return { fromPointId, toPointId };
+    }
+  }
+  return undefined;
 }
 
 function replacementProperty(
