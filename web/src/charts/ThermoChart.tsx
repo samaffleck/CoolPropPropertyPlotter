@@ -2,7 +2,7 @@ import { Download, Eraser, Maximize2, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { engine } from "../engine/client";
 import { curveValue, statePoint } from "../engine/curve";
-import { Prop, type StateInput, type Viewport } from "../engine/types";
+import { ProcessKind, Prop, type StateInput, type Viewport } from "../engine/types";
 import { computePointState, useIsolines } from "../state/compute";
 import { useData } from "../state/data";
 import type { PointResult } from "../state/compute";
@@ -57,6 +57,7 @@ export function ThermoChart() {
   const removePoint = useStore((s) => s.removePoint);
   const cycleId = useStore((s) => s.cycleId);
   const selectedPointId = useStore((s) => s.selectedPointId);
+  const chains = useStore((s) => s.chains);
   const setSelectedPointId = useStore((s) => s.setSelectedPoint);
 
   const chart = chartById(chartId);
@@ -332,8 +333,21 @@ export function ThermoChart() {
           const { x, y } = r.axes(viewRef.current);
           const px = Math.max(MARGIN.left, Math.min(r.width - MARGIN.right, pos.px));
           const py = Math.max(MARGIN.top, Math.min(r.height - MARGIN.bottom, pos.py));
-          const isConnected = scene.lines.some((line) => line.connectedPointIds?.includes(pointDrag!.id));
-          const snapped = isConnected ? null : r.snapToLine({ px, py }, scene, viewRef.current);
+          const connectedLines = scene.lines.filter((line) => line.connectedPointIds?.includes(pointDrag!.id));
+          const connectedStep = chains.flatMap((chain) => chain.steps).find((step) =>
+            step.fromPointId === pointDrag!.id || step.toPointId === pointDrag!.id,
+          );
+          const isobaricOrIsentropic = connectedStep?.spec.kind === ProcessKind.Isobaric
+            || connectedStep?.spec.kind === ProcessKind.Isentropic;
+          const snapped = isobaricOrIsentropic
+            ? null
+            : r.snapToLine(
+                { px, py },
+                scene,
+                viewRef.current,
+                10,
+                connectedLines.length ? (line) => line.connectedPointIds?.includes(pointDrag!.id) === true : undefined,
+              );
           const xValue = snapped?.x ?? x.fromPx(px);
           const yValue = snapped?.y ?? y.fromPx(py);
           const preview = pointDrag.marker.point.slice();
@@ -489,7 +503,7 @@ export function ThermoChart() {
       canvas.removeEventListener("pointerleave", onLeave);
       canvas.removeEventListener("dblclick", onDouble);
     };
-  }, [updateView, schedule, chart, chartId, addPoint, updatePoint, removePoint, setView, scene, mode, fluid, data.points, statePoints]);
+  }, [updateView, schedule, chart, chartId, addPoint, updatePoint, removePoint, setView, scene, mode, fluid, data.points, statePoints, chains]);
 
   // ---- fit to overlay content ----
   const fit = useCallback(() => {
