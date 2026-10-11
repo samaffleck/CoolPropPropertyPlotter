@@ -63,11 +63,11 @@ export function ProcessPanel() {
     <>
       <Section
         title="Processes"
-        actions={
+        actions={chains.length > 0 ? (
           <Button variant="ghost" onClick={newChain} className="h-7 px-2 text-xs">
             <Plus size={14} /> New
           </Button>
-        }
+        ) : undefined}
       >
       </Section>
       {chains.map((c, i) => (
