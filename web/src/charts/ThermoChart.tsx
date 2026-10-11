@@ -1,4 +1,4 @@
-import { Download, Maximize2, MoreHorizontal, RotateCcw, Trash2, X } from "lucide-react";
+import { Download, Maximize2, RotateCcw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { engine, latestOnly } from "../engine/client";
 import { curveValue, statePoint } from "../engine/curve";
@@ -72,7 +72,6 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
   const frame = useRef(0);
   const drawRef = useRef<() => void>(() => {});
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [linesOpen, setLinesOpen] = useState(false);
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const [drawKind, setDrawKind] = useState<ProcessKind | null>(null);
   const [readout, setReadout] = useState<{ px: number; py: number; state: ThermoState | null } | null>(null);
@@ -617,7 +616,7 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-12 shrink-0 flex-nowrap items-center gap-2 border-b border-line px-3">
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-line px-3 py-1.5">
         <Select
           className="w-24"
           label="Chart type"
@@ -634,77 +633,63 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
             options={[{ value: "" as const, label: "Draw line…" }, ...PROCESS_KINDS.map(({ kind, label }) => ({ value: kind, label }))]}
           />
         )}
-        <div className="flex items-center gap-1">
-          {families.includes(Prop.Q) && <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-medium text-accent">Quality</span>}
-          <div className="relative">
-            <ToolButton label="More chart options" onClick={() => setLinesOpen((open) => !open)}>
-              <MoreHorizontal size={16} />
-            </ToolButton>
-            {linesOpen && (
-              <div className="absolute left-0 top-9 z-20 w-52 rounded-lg border border-line bg-surface p-2 shadow-xl">
-                {chart.families.map((f) => {
-                  const on = families.includes(f);
-                  return (
-                    <button
-                      key={f}
-                      onClick={() => toggleFamily(chartId, f)}
-                      aria-pressed={on}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-ink-2 hover:bg-surface-2"
-                    >
-                      <span
-                        className="inline-block h-0.5 w-3 rounded"
-                        style={{ background: on ? familyColor(theme, f) : "var(--border)", opacity: f === Prop.Q ? 0.8 : 1 }}
-                      />
-                      <span className="flex-1">{FAMILY_NAMES[f]}</span>
-                      {on && <span aria-hidden>✓</span>}
-                    </button>
-                  );
-                })}
-                <div className="mt-1 border-t border-line pt-1">
-                  <button
-                    onClick={() => {
-                      setView(chartId, undefined);
-                      setLinesOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-ink-2 hover:bg-surface-2"
-                  >
-                    <RotateCcw size={14} /> Reset view
-                  </button>
-                  <button
-                    onClick={() => {
-                      fit();
-                      setLinesOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-ink-2 hover:bg-surface-2"
-                  >
-                    <Maximize2 size={14} /> Fit to content
-                  </button>
-                  <label className="flex items-center justify-between px-2 py-1.5 text-xs text-ink-2" htmlFor="line-density">
-                    Density
-                    <select
-                      id="line-density"
-                      className="rounded border border-line bg-surface px-1.5 py-1"
-                      value={density}
-                      onChange={(e) => useStore.getState().setDensity(Number(e.target.value))}
-                    >
-                      {[6, 10, 16].map((n) => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                  </label>
-                  <button
-                    onClick={() => {
-                      exportPng();
-                      setLinesOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-ink-2 hover:bg-surface-2"
-                  >
-                    <Download size={14} /> Export PNG
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+        <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
+        <div className="flex flex-wrap items-center gap-0.5" role="group" aria-label="Isoline families">
+          {chart.families.map((f) => {
+            const on = families.includes(f);
+            return (
+              <button
+                key={f}
+                onClick={() => toggleFamily(chartId, f)}
+                aria-label={`Toggle ${FAMILY_NAMES[f]}`}
+                aria-pressed={on}
+                className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] transition-colors ${on ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2"}`}
+              >
+                <span
+                  className="inline-block h-0.5 w-3 rounded"
+                  style={{ background: on ? familyColor(theme, f) : "var(--border)", opacity: f === Prop.Q ? 0.8 : 1 }}
+                />
+                <span>{FAMILY_NAMES[f]}</span>
+                <span className="w-3 text-center text-ink-2" aria-hidden>{on ? "✓" : ""}</span>
+              </button>
+            );
+          })}
         </div>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex flex-wrap items-center gap-x-1 gap-y-1 border-l border-line pl-2">
+          <button
+            onClick={() => setView(chartId, undefined)}
+            aria-label="Reset view"
+            className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink"
+          >
+            <RotateCcw size={16} />
+          </button>
+          <button
+            onClick={fit}
+            aria-label="Fit to content"
+            className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink"
+          >
+            <Maximize2 size={16} />
+          </button>
+          <label className="inline-flex items-center gap-1.5 px-1.5 py-1 text-[13px] text-ink-2" htmlFor="line-density">
+            Density
+            <select
+              id="line-density"
+              className="rounded border border-line bg-surface px-1.5 py-1 text-[13px] text-ink"
+              value={density}
+              onChange={(e) => useStore.getState().setDensity(Number(e.target.value))}
+            >
+              {[6, 10, 16].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          <button
+            onClick={exportPng}
+            aria-label="Export PNG"
+            className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink"
+          >
+            <Download size={16} />
+          </button>
+        </div>
+        <div className="flex items-center gap-1">
           {iso.loading && <span className="mr-1 text-[11px] text-ink-3" aria-label="Computing isolines">···</span>}
           {mode !== "explore" && (
             <button onClick={onToggleResults} aria-expanded={resultsOpen} className={`rounded-md px-2.5 py-1.5 text-xs ${resultsOpen ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink"}`}>
@@ -734,14 +719,6 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
         {readout && <Readout {...readout} />}
       </div>
     </div>
-  );
-}
-
-function ToolButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} title={label} aria-label={label} className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink">
-      {children}
-    </button>
   );
 }
 
