@@ -195,13 +195,13 @@ export function ResultsPanel() {
   if (mode === "process") {
     const rows: Row[] = [];
     for (const c of chains) {
-      const letter = c.chain.name.replace(/^Process\s+/, "");
+      const letter = c.chain.name.replace(/^Connection\s+/, "");
       if (c.start) rows.push({ id: `${letter}0`, label: `${c.chain.name}: start`, state: c.start });
       c.steps.forEach((s, i) => s.result && rows.push({ id: `${letter}${i + 1}`, label: `${c.chain.name}: after step ${i + 1}`, state: s.result.end }));
     }
     return (
-      <Shell title="Process states" onCsv={rows.length ? () => downloadCsv(`processes-${fluid}.csv`, rows, units) : undefined}>
-        {rows.length ? <StatesTable rows={rows} /> : <Empty>Add a process in the side panel or click the chart.</Empty>}
+      <Shell title="Connection states" onCsv={rows.length ? () => downloadCsv(`connections-${fluid}.csv`, rows, units) : undefined}>
+        {rows.length ? <StatesTable rows={rows} /> : <Empty>Add a connection in the side panel or draw one on the chart.</Empty>}
       </Shell>
     );
   }

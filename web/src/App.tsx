@@ -6,7 +6,7 @@ import { ExplorePanel } from "./panels/ExplorePanel";
 import { ProcessPanel } from "./panels/ProcessPanel";
 import { ResultsPanel } from "./panels/ResultsPanel";
 import { DataProvider, useData } from "./state/data";
-import { useStore, type Mode } from "./state/store";
+import { useStore } from "./state/store";
 
 const GITHUB = "https://github.com/samaffleck/CoolPropPropertyPlotter";
 
@@ -51,31 +51,17 @@ function HomePage({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-const MODES: { id: Mode; label: string; icon: string }[] = [
-  { id: "explore", label: "Explore", icon: "⌖" },
-  { id: "process", label: "Processes", icon: "↗" },
-  { id: "cycle", label: "Cycles", icon: "↻" },
-];
 const maxSidebarWidth = () => Math.min(520, window.innerWidth * 0.55);
 
 function Sidebar({ width }: { width: number }) {
-  const mode = useStore((s) => s.mode);
-  const setMode = useStore((s) => s.setMode);
   const { infoError } = useData();
   return (
     <aside style={{ "--sidebar-width": `${width}px` } as CSSProperties} className="order-2 flex w-full shrink-0 flex-col border-line bg-surface lg:order-1 lg:min-h-0 lg:w-[var(--sidebar-width)]">
-      <nav className="flex h-12 shrink-0 items-center gap-1 border-b border-line p-2" aria-label="Mode">
-        {MODES.map(({ id, label, icon }) => (
-          <button key={id} onClick={() => setMode(id)} aria-current={mode === id} title={label} className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-[13px] transition-colors ${mode === id ? "bg-surface-2 text-ink" : "text-ink-3 hover:bg-surface-2 hover:text-ink"}`}>
-            <span aria-hidden className="text-base">{icon}</span>{label}
-          </button>
-        ))}
-      </nav>
-      <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {infoError && <div className="m-4 text-xs text-danger">Could not load fluid: {infoError}</div>}
-        {mode === "explore" && <ExplorePanel />}
-        {mode === "process" && <ProcessPanel />}
-        {mode === "cycle" && <CyclePanel />}
+        <CyclePanel />
+        <ExplorePanel />
+        <ProcessPanel />
       </div>
     </aside>
   );
@@ -122,7 +108,7 @@ function Editor({ onHome }: { onHome: () => void }) {
             <div className="min-h-[55vh] min-w-0 flex-1 lg:min-h-0">
               <ThermoChart resultsOpen={resultsOpen} onToggleResults={() => setResultsOpen((open) => !open)} />
             </div>
-            {mode !== "explore" && resultsOpen && (
+            {resultsOpen && (
               <div className="h-56 shrink-0 border-t border-line lg:h-52">
                 <ResultsPanel />
               </div>

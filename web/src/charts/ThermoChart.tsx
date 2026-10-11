@@ -1,14 +1,14 @@
 import { Download, Maximize2, RotateCcw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { engine, latestOnly } from "../engine/client";
+import { engine } from "../engine/client";
 import { curveValue, statePoint } from "../engine/curve";
 import { ProcessKind, Prop, type ProcessSpec, type StateInput, type ThermoState, type Viewport } from "../engine/types";
-import { useIsolines } from "../state/compute";
+import { computePointState, useIsolines } from "../state/compute";
 import { useData } from "../state/data";
 import type { PointResult } from "../state/compute";
 import { useStore } from "../state/store";
 import { COORDINATES, stateValue } from "../units/properties";
-import { formatNumber, toDisplay, unitOf } from "../units/units";
+import { formatNumber, fromDisplay, toDisplay, unitOf } from "../units/units";
 import { chartById, CHARTS, FAMILY_NAMES } from "./charts";
 import { MARGIN, Renderer } from "./renderer";
 import { buildScene, familyColor } from "./scene";
@@ -51,9 +51,11 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
   const addPoint = useStore((s) => s.addPoint);
   const updatePoint = useStore((s) => s.updatePoint);
   const removePoint = useStore((s) => s.removePoint);
+  const removeChain = useStore((s) => s.removeChain);
   const addChain = useStore((s) => s.addChain);
-  const setMode = useStore((s) => s.setMode);
   const cycleId = useStore((s) => s.cycleId);
+  const selectedPointId = useStore((s) => s.selectedPointId);
+  const setSelectedPointId = useStore((s) => s.setSelectedPoint);
 
   const chart = chartById(chartId);
   const data = useData();
@@ -66,24 +68,27 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const draggedMarkerRef = useRef<{ id: string; point: Float64Array; input?: StateInput } | null>(null);
+  const pendingPointsRef = useRef(new Map<string, { point: Float64Array; label: string }>());
   const linePreviewRef = useRef<Float64Array | null>(null);
   const viewRef = useRef<Viewport | undefined>(storedView);
   const hoverRef = useRef<{ px: number; py: number } | null>(null);
   const frame = useRef(0);
   const drawRef = useRef<() => void>(() => {});
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
+  const selectedPointCardRef = useRef<HTMLElement | null>(null);
   const [drawKind, setDrawKind] = useState<ProcessKind | null>(null);
-  const [readout, setReadout] = useState<{ px: number; py: number; state: ThermoState | null } | null>(null);
+  const [readout, setReadout] = useState<{ x: number; y: number; line?: { label: string; color: string } } | null>(null);
   const selectedPoint = data.points.find(({ point }) => point.id === selectedPointId);
 
   useEffect(() => {
-    if (selectedPointId && !data.points.some(({ point, state }) => point.id === selectedPointId && state)) setSelectedPointId(null);
+    if (selectedPointId && !data.points.some(({ point }) => point.id === selectedPointId)) setSelectedPointId(null);
   }, [data.points, selectedPointId]);
   useEffect(() => {
-    if (mode !== "explore") setDrawKind(null);
-  }, [mode]);
-
+    if (!selectedPoint?.state) return;
+    const card = selectedPointCardRef.current;
+    card?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    card?.focus({ preventScroll: true });
+  }, [selectedPoint?.point.id]);
   // Default view per chart/fluid.
   useEffect(() => {
     if (storedView) return;
@@ -107,10 +112,11 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
         isolines: iso.data,
         points: data.points,
         chains: data.chains,
-        cycle: mode === "cycle" ? data.cycle : null,
-        showOverlays: { points: mode !== "cycle", chains: mode === "process", cycle: mode === "cycle" },
+        cycle: data.cycle,
+        exampleSnapshot: data.exampleSnapshot,
+        showOverlays: { points: true, chains: true, cycle: true },
       }),
-    [theme, units, data, iso.data, mode],
+    [theme, units, data, iso.data],
   );
 
   const xUnit = unitOf(units, COORDINATES[chart.x].quantity);
@@ -123,11 +129,42 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
     if (!r || !vp) return;
     const preview = draggedMarkerRef.current;
     const previewLine = linePreviewRef.current;
-    const frameScene = preview || previewLine
+    const pendingPoints = pendingPointsRef.current;
+    const frameScene = preview || previewLine || pendingPoints.size > 0
       ? {
           ...scene,
-          markers: preview ? scene.markers.map((marker) => marker.id === preview.id ? { ...marker, point: preview.point } : marker) : scene.markers,
-          lines: previewLine ? [...scene.lines, { data: previewLine, color: theme.accent, width: 2, dash: [4, 3] }] : scene.lines,
+          markers: [
+            ...(preview ? scene.markers.map((marker) => marker.id === preview.id ? { ...marker, point: preview.point } : marker) : scene.markers),
+            ...[...pendingPoints].flatMap(([id, pending]) => scene.markers.some((marker) => marker.id === id)
+              ? []
+              : [{ id, point: pending.point, color: theme.accent, label: pending.label }]),
+          ],
+          lines: [
+            ...scene.lines.map((line) => {
+              if (!preview || !line.snapshotPointIds?.includes(preview.id)) return line;
+              const marker = scene.markers.find((candidate) => candidate.id === preview.id);
+              if (!marker) return line;
+              const vertexCount = line.data.length / 6;
+              if (vertexCount < 2) return line;
+              const movedFrom = line.snapshotPointIds[0] === preview.id;
+              const data = line.data.slice();
+              for (let vertex = 0; vertex < vertexCount; vertex++) {
+                const t = vertex / (vertexCount - 1);
+                const weight = movedFrom ? 1 - t : t;
+                const point = data.subarray(vertex * 6, vertex * 6 + 6);
+                for (const prop of [chart.x, chart.y]) {
+                  const oldValue = curveValue(marker.point, 0, prop);
+                  const newValue = curveValue(preview.point, 0, prop);
+                  const pathValue = curveValue(data, vertex, prop);
+                  if (Number.isFinite(pathValue) && Number.isFinite(oldValue) && Number.isFinite(newValue)) {
+                    setCoordinate(point, prop, pathValue + weight * (newValue - oldValue));
+                  }
+                }
+              }
+              return { ...line, data };
+            }),
+            ...(previewLine ? [{ data: previewLine, color: theme.accent, width: 2, dash: [4, 3] }] : []),
+          ],
         }
       : scene;
     r.render({
@@ -165,6 +202,15 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       schedule();
     }
   }, [data.points, schedule]);
+  useEffect(() => {
+    let changed = false;
+    for (const { point } of data.points) {
+      changed = pendingPointsRef.current.delete(point.id) || changed;
+    }
+    if (changed) {
+      schedule();
+    }
+  }, [data.points, schedule]);
 
   // Canvas sizing.
   useEffect(() => {
@@ -192,15 +238,6 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       commitTimer.current = setTimeout(() => setView(chartId, vp), commitDelay);
     },
     [schedule, setView, chartId],
-  );
-
-  const probe = useMemo(
-    () =>
-      latestOnly(
-        async (px: number, py: number, x: number, y: number) => ({ px, py, r: await engine.state(fluid, { a: chart.x, va: x, b: chart.y, vb: y }) }),
-        ({ px, py, r }) => setReadout(hoverRef.current ? { px, py, state: r.ok ? r.state : null } : null),
-      ),
-    [fluid, chart],
   );
 
   useEffect(() => {
@@ -233,6 +270,7 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
     };
 
     const pointers = new Map<number, { px: number; py: number }>();
+    let recentClickActions: Array<{ kind: "point" | "chain"; id: string }> = [];
     let drag: { px: number; py: number; vp: Viewport; moved: boolean } | null = null;
     let pointDrag: { id: string; marker: (typeof scene.markers)[number]; moved: boolean; input?: StateInput; last: { px: number; py: number } } | null = null;
     let lineDrag: {
@@ -251,7 +289,7 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
     let pinch: { d: number; vp: Viewport; mx: number; my: number } | null = null;
     const findPoint = (pos: { px: number; py: number }, vp: Viewport) => {
       const r = rendererRef.current;
-      if (!r || mode === "cycle") return null;
+      if (!r) return null;
       const { x, y } = r.axes(vp);
       let closest: { marker: (typeof scene.markers)[number]; distance: number } | null = null;
       for (const marker of scene.markers) {
@@ -284,7 +322,7 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
         linePreviewRef.current = null;
       } else {
         const marker = findPoint(pos, vp);
-        if (drawKind !== null && mode === "explore" && region(pos.px, pos.py) === "plot") {
+        if (drawKind !== null && region(pos.px, pos.py) === "plot") {
           const snapped = marker ? null : rendererRef.current?.snapToLine(pos, scene, vp);
           const { x, y } = rendererRef.current!.axes(vp);
           const xValue = marker ? curveValue(marker.point, 0, chart.x) : snapped?.x ?? x.fromPx(pos.px);
@@ -412,12 +450,18 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
         schedule();
         return;
       }
+      const { x, y } = r.axes(vp);
       const snapped = r.snapToLine(pos, scene, vp);
       const hoverPos = snapped ? { px: snapped.px, py: snapped.py } : pos;
+      const xValue = snapped?.x ?? x.fromPx(pos.px);
+      const yValue = snapped?.y ?? y.fromPx(pos.py);
       hoverRef.current = hoverPos;
+      setReadout({
+        x: xValue,
+        y: yValue,
+        line: snapped?.label && snapped.labelColor ? { label: snapped.label, color: snapped.labelColor } : undefined,
+      });
       schedule();
-      const { x, y } = r.axes(vp);
-      probe(hoverPos.px, hoverPos.py, snapped?.x ?? x.fromPx(pos.px), snapped?.y ?? y.fromPx(pos.py));
     };
     const onUp = (e: PointerEvent) => {
       pointers.delete(e.pointerId);
@@ -481,7 +525,6 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
             }
             addChain(completed.startInput, spec);
             setSelectedPointId(null);
-            setMode("process");
           })().catch(() => {});
         }
         return;
@@ -516,11 +559,20 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
         const snapped = r.snapToLine(pos, scene, vp);
         const { x, y } = r.axes(vp);
         const input = { a: chart.x, va: snapped?.x ?? x.fromPx(pos.px), b: chart.y, vb: snapped?.y ?? y.fromPx(pos.py) };
+        const id = addPoint(input);
+        const point = useStore.getState().points.find((candidate) => candidate.id === id);
+        if (point) {
+          pendingPointsRef.current.set(id, {
+            point: pointFromCoordinates(chart.x, input.va, chart.y, input.vb),
+            label: point.label,
+          });
+        }
+        setSelectedPointId(id);
+        recentClickActions.push({ kind: "point", id });
+        schedule();
         if (clickTimer.current) clearTimeout(clickTimer.current);
         clickTimer.current = setTimeout(() => {
-          const m = useStore.getState().mode;
-          if (m === "explore") setSelectedPointId(addPoint(input));
-          else if (m === "process") addChain(input);
+          recentClickActions = [];
           clickTimer.current = null;
         }, 500);
       }
@@ -535,6 +587,16 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       e.preventDefault();
       if (clickTimer.current) clearTimeout(clickTimer.current);
       clickTimer.current = null;
+      for (const action of recentClickActions) {
+        if (action.kind === "point") {
+          removePoint(action.id);
+          pendingPointsRef.current.delete(action.id);
+        } else {
+          removeChain(action.id);
+        }
+      }
+      recentClickActions = [];
+      setSelectedPointId(null);
       setView(chartId, undefined);
     };
 
@@ -555,20 +617,19 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
       canvas.removeEventListener("pointerleave", onLeave);
       canvas.removeEventListener("dblclick", onDouble);
     };
-  }, [updateView, schedule, probe, chart, chartId, addPoint, addChain, updatePoint, setView, scene, mode, fluid, drawKind, data.points, setMode]);
+  }, [updateView, schedule, chart, chartId, addPoint, addChain, updatePoint, removePoint, removeChain, setView, scene, mode, fluid, drawKind, data.points]);
 
   // ---- fit to overlay content ----
   const fit = useCallback(() => {
     const vp = viewRef.current;
     if (!vp) return;
     const pts: Float64Array[] = [];
-    if (mode === "cycle" && data.cycle) data.cycle.states.forEach((s) => pts.push(statePoint(s.state)));
-    if (mode === "process")
-      data.chains.forEach((c) => {
-        if (c.start) pts.push(statePoint(c.start));
-        c.steps.forEach((s) => s.result && pts.push(statePoint(s.result.end)));
-      });
-    if (mode === "explore") data.points.forEach((p) => p.state && pts.push(statePoint(p.state)));
+    if (data.cycle) data.cycle.states.forEach((s) => pts.push(statePoint(s.state)));
+    data.chains.forEach((c) => {
+      if (c.start) pts.push(statePoint(c.start));
+      c.steps.forEach((s) => s.result && pts.push(statePoint(s.result.end)));
+    });
+    data.points.forEach((p) => p.state && pts.push(statePoint(p.state)));
     const xs = pts.map((p) => curveValue(p, 0, chart.x)).filter(Number.isFinite);
     const ys = pts.map((p) => curveValue(p, 0, chart.y)).filter(Number.isFinite);
     if (xs.length < 2) return setView(chartId, undefined);
@@ -603,6 +664,17 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
     if (!inside) fit();
   }, [mode, data.cycle, storedView, cycleId, fluid, chartId, chart, fit]);
 
+  useEffect(() => {
+    const snapshot = data.exampleSnapshot;
+    if (!snapshot || !storedView) return;
+    const ids = Object.values(snapshot.pointIds);
+    if (!ids.length || ids.some((id) => !data.points.some((point) => point.point.id === id && point.state))) return;
+    const key = `snapshot:${snapshot.id}:${fluid}:${chartId}`;
+    if (fittedFor.current === key) return;
+    fittedFor.current = key;
+    fit();
+  }, [data.exampleSnapshot, data.points, storedView, fluid, chartId, fit]);
+
   const exportPng = () => {
     canvasRef.current?.toBlob((blob) => {
       if (!blob) return;
@@ -624,15 +696,15 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
           onChange={setChart}
           options={CHARTS.map((c) => ({ value: c.id, label: c.label }))}
         />
-        {mode === "explore" && (
+        {
           <Select
             className="w-36 shrink-0"
-            label="Draw process line"
+            label="Draw connection"
             value={drawKind ?? ""}
             onChange={(kind) => setDrawKind(kind === "" ? null : kind as ProcessKind)}
-            options={[{ value: "" as const, label: "Draw line…" }, ...PROCESS_KINDS.map(({ kind, label }) => ({ value: kind, label }))]}
+            options={[{ value: "" as const, label: "Draw connection…" }, ...PROCESS_KINDS.map(({ kind, label, group }) => ({ value: kind, label, group }))]}
           />
-        )}
+        }
         <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
         <div className="flex flex-wrap items-center gap-0.5" role="group" aria-label="Isoline families">
           {chart.families.map((f) => {
@@ -691,11 +763,9 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
         </div>
         <div className="flex items-center gap-1">
           {iso.loading && <span className="mr-1 text-[11px] text-ink-3" aria-label="Computing isolines">···</span>}
-          {mode !== "explore" && (
-            <button onClick={onToggleResults} aria-expanded={resultsOpen} className={`rounded-md px-2.5 py-1.5 text-xs ${resultsOpen ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink"}`}>
-              Results
-            </button>
-          )}
+          <button onClick={onToggleResults} aria-expanded={resultsOpen} className={`rounded-md px-2.5 py-1.5 text-xs ${resultsOpen ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink"}`}>
+            Results
+          </button>
         </div>
       </div>
       <div ref={containerRef} className="relative min-h-0 flex-1 touch-none select-none">
@@ -703,12 +773,14 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
           ref={canvasRef}
           className="absolute inset-0 cursor-crosshair"
           aria-label={`${chart.title} chart for ${fluid}`}
-          title={drawKind ? `Drag to draw a ${PROCESS_KINDS.find(({ kind }) => kind === drawKind)?.label ?? "process"} · endpoints snap to states` : "Drag a point to move it · click to add a state · double-click to reset view"}
           role="img"
         />
         {selectedPoint?.state && (
           <SelectedPointCard
+            cardRef={selectedPointCardRef}
             point={selectedPoint}
+            chart={chart}
+            fluid={fluid}
             onClose={() => setSelectedPointId(null)}
             onRemove={() => {
               removePoint(selectedPoint.point.id);
@@ -716,24 +788,56 @@ export function ThermoChart({ resultsOpen, onToggleResults }: { resultsOpen: boo
             }}
           />
         )}
-        {readout && <Readout {...readout} />}
+        {readout && <Readout {...readout} chart={chart} />}
       </div>
     </div>
   );
 }
 
-function SelectedPointCard({ point, onClose, onRemove }: { point: PointResult; onClose: () => void; onRemove: () => void }) {
+function SelectedPointCard({ cardRef, point, chart, fluid, onClose, onRemove }: {
+  cardRef: React.RefObject<HTMLElement | null>;
+  point: PointResult;
+  chart: ReturnType<typeof chartById>;
+  fluid: string;
+  onClose: () => void;
+  onRemove: () => void;
+}) {
   const units = useStore((s) => s.units);
+  const updatePoint = useStore((s) => s.updatePoint);
   const state = point.state!;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fields = [
-    ["Temperature", state.T, "temperature"],
-    ["Pressure", state.p, "pressure"],
-    ["Enthalpy", state.h, "specific_energy"],
-    ["Entropy", state.s, "specific_entropy"],
-    ["Density", state.rho, "density"],
+    ["Temperature", Prop.T],
+    ["Pressure", Prop.P],
+    ["Enthalpy", Prop.H],
+    ["Entropy", Prop.S],
+    ["Density", Prop.D],
   ] as const;
+  const commitValue = async (prop: Prop, displayValue: number) => {
+    const unit = unitOf(units, COORDINATES[prop].quantity);
+    const value = fromDisplay(unit, displayValue);
+    const anchor = prop === chart.x ? chart.y : prop === chart.y ? chart.x : chart.x;
+    const input: StateInput = { a: anchor, va: stateValue(state, anchor), b: prop, vb: value };
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await computePointState(fluid, input);
+      if (!result.state) {
+        setError(result.error ?? "Could not calculate that state.");
+        return false;
+      }
+      updatePoint(point.point.id, { input });
+      return true;
+    } catch {
+      setError("Could not calculate that state.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
-    <section className="absolute left-[76px] top-3 z-10 w-72 max-w-[calc(100%-88px)] rounded-xl border border-line bg-surface/95 p-3 shadow-xl backdrop-blur" aria-label={`State ${point.point.label}`}>
+    <section ref={cardRef} tabIndex={-1} className="absolute left-[76px] top-3 z-10 w-72 max-w-[calc(100%-88px)] rounded-xl border border-line bg-surface/95 p-3 shadow-xl backdrop-blur" aria-label={`State ${point.point.label}`}>
       <div className="mb-2 flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="font-medium text-ink">State {point.point.label}</div>
@@ -743,57 +847,121 @@ function SelectedPointCard({ point, onClose, onRemove }: { point: PointResult; o
         <button onClick={onClose} title="Close state details" aria-label="Close state details" className="rounded p-1 text-ink-3 hover:bg-surface-2 hover:text-ink"><X size={14} /></button>
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-        {fields.map(([label, value, quantity]) => {
-          const unit = unitOf(units, quantity);
+        {fields.map(([label, prop]) => {
+          const unit = unitOf(units, COORDINATES[prop].quantity);
+          const displayValue = toDisplay(unit, stateValue(state, prop));
           return (
-            <div key={label}>
+            <div key={label} className="min-w-0">
               <div className="text-xs text-ink-3">{label}</div>
-              <div className="tabular text-ink">{formatNumber(toDisplay(unit, value), 4)} <span className="text-ink-3">{unit.label}</span></div>
+              <div className="flex items-baseline gap-1 tabular text-ink">
+                <InlineEditableValue label={label} value={displayValue} disabled={saving} onCommit={(next) => commitValue(prop, next)} />
+                <span className="text-ink-3">{unit.label}</span>
+              </div>
             </div>
           );
         })}
       </div>
-      <div className="mt-2 border-t border-line pt-2 text-xs text-ink-3">Drag the point on the graph to move it.</div>
+      {error ? (
+        <div role="status" className="mt-2 text-xs text-danger">{error}</div>
+      ) : saving ? (
+        <div role="status" className="mt-2 text-xs text-ink-3">Updating point…</div>
+      ) : (
+        <div className="mt-2 border-t border-line pt-2 text-xs text-ink-3">Click a value to edit it.</div>
+      )}
     </section>
   );
 }
 
-function Readout({ px, py, state }: { px: number; py: number; state: ThermoState | null }) {
+function InlineEditableValue({ label, value, disabled, onCommit }: {
+  label: string;
+  value: number;
+  disabled: boolean;
+  onCommit: (value: number) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const skipBlurRef = useRef(false);
+  const commit = async () => {
+    if (!editing || disabled) return;
+    const next = Number(draft);
+    setEditing(false);
+    if (draft.trim() && Number.isFinite(next)) await onCommit(next);
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        aria-label={`Edit ${label} value`}
+        inputMode="decimal"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (skipBlurRef.current) {
+            skipBlurRef.current = false;
+            return;
+          }
+          void commit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            skipBlurRef.current = true;
+            event.currentTarget.blur();
+            setEditing(false);
+          }
+        }}
+        className="w-[8ch] min-w-[5ch] max-w-full border-0 bg-transparent p-0 text-right font-mono text-ink outline-none focus-visible:underline focus-visible:decoration-accent"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => {
+        setDraft(formatNumber(value, 4));
+        setEditing(true);
+      }}
+      className="cursor-text border-0 bg-transparent p-0 text-right font-mono text-ink decoration-accent underline-offset-2 hover:underline disabled:cursor-wait"
+      aria-label={`Edit ${label}`}
+    >
+      {formatNumber(value, 4)}
+    </button>
+  );
+}
+
+function Readout({ x, y, chart, line }: {
+  x: number;
+  y: number;
+  chart: ReturnType<typeof chartById>;
+  line?: { label: string; color: string };
+}) {
   const units = useStore((s) => s.units);
-  const rows: [string, number, string][] = state
-    ? [
-        ["T", toDisplay(unitOf(units, "temperature"), state.T), unitOf(units, "temperature").label],
-        ["p", toDisplay(unitOf(units, "pressure"), state.p), unitOf(units, "pressure").label],
-        ["h", toDisplay(unitOf(units, "specific_energy"), state.h), unitOf(units, "specific_energy").label],
-        ["s", toDisplay(unitOf(units, "specific_entropy"), state.s), unitOf(units, "specific_entropy").label],
-        ["ρ", toDisplay(unitOf(units, "density"), state.rho), unitOf(units, "density").label],
-      ]
-    : [];
-  if (state && Number.isFinite(state.Q)) rows.push(["x", state.Q, ""]);
-  const flip = px > 320;
+  const xUnit = unitOf(units, COORDINATES[chart.x].quantity);
+  const yUnit = unitOf(units, COORDINATES[chart.y].quantity);
+  const rows: [string, number, string][] = [
+    [COORDINATES[chart.x].symbol, toDisplay(xUnit, x), xUnit.label],
+    [COORDINATES[chart.y].symbol, toDisplay(yUnit, y), yUnit.label],
+  ];
   return (
     <div
-      className="pointer-events-none absolute z-10 min-w-40 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs shadow-lg backdrop-blur"
-      style={{ left: flip ? undefined : px + 14, right: flip ? `calc(100% - ${px - 14}px)` : undefined, top: py + 14 }}
+      className="pointer-events-none absolute right-6 top-5 z-10 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs shadow-lg backdrop-blur"
+      aria-label="Cursor coordinates"
     >
-      {state ? (
-        <>
-          <div className="mb-1 font-medium capitalize text-ink">{state.phase}</div>
-          <table className="tabular">
-            <tbody>
-              {rows.map(([k, v, u]) => (
-                <tr key={k}>
-                  <td className="pr-2 text-ink-3">{k}</td>
-                  <td className="pr-1 text-right font-mono text-ink">{formatNumber(v, 5)}</td>
-                  <td className="text-ink-3">{u}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      ) : (
-        <div className="text-ink-3">No equilibrium state here</div>
-      )}
+      {line && <div className="mb-1 border-b border-line pb-1 font-medium" style={{ color: line.color }}>{line.label}</div>}
+      <table className="tabular">
+        <tbody>
+          {rows.map(([k, v, u]) => (
+            <tr key={k}>
+              <td className="pr-2 text-ink-3">{k}</td>
+              <td className="pr-1 text-right font-mono text-ink">{formatNumber(v, 5)}</td>
+              <td className="text-ink-3">{u}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -9,19 +9,19 @@ import { COORDINATES, stateValue } from "../units/properties";
 import { friendlyError } from "./ExplorePanel";
 import { StateInputEditor } from "./StateInputEditor";
 
-export const PROCESS_KINDS: { kind: ProcessKind; label: string; hint: string; targets: Prop[] }[] = [
-  { kind: ProcessKind.Compression, label: "Compressor / pump", hint: "Adiabatic, with isentropic efficiency", targets: [Prop.P] },
-  { kind: ProcessKind.Expansion, label: "Turbine / expander", hint: "Adiabatic, with isentropic efficiency", targets: [Prop.P] },
-  { kind: ProcessKind.Isenthalpic, label: "Throttle (JT valve)", hint: "Constant enthalpy", targets: [Prop.P, Prop.T] },
-  { kind: ProcessKind.Isobaric, label: "Heat exchange (isobaric)", hint: "Heater, cooler, condenser, evaporator", targets: [Prop.T, Prop.Q, Prop.H, Prop.S, Prop.D, Prop.V] },
-  { kind: ProcessKind.Isentropic, label: "Isentropic", hint: "Reversible adiabatic", targets: [Prop.P, Prop.T, Prop.H, Prop.D] },
-  { kind: ProcessKind.Isothermal, label: "Isothermal", hint: "Reversible, constant temperature", targets: [Prop.P, Prop.S, Prop.Q, Prop.D, Prop.V] },
-  { kind: ProcessKind.Isochoric, label: "Isochoric", hint: "Constant volume", targets: [Prop.T, Prop.P, Prop.H, Prop.S] },
+export const PROCESS_KINDS: { kind: ProcessKind; label: string; hint: string; targets: Prop[]; group: string }[] = [
+  { kind: ProcessKind.Isobaric, label: "Isobaric", hint: "Constant pressure", targets: [Prop.T, Prop.Q, Prop.H, Prop.S, Prop.D, Prop.V], group: "Thermodynamic paths" },
+  { kind: ProcessKind.Isothermal, label: "Isothermal", hint: "Constant temperature", targets: [Prop.P, Prop.S, Prop.Q, Prop.D, Prop.V], group: "Thermodynamic paths" },
+  { kind: ProcessKind.Isentropic, label: "Isentropic", hint: "Constant entropy", targets: [Prop.P, Prop.T, Prop.H, Prop.D], group: "Thermodynamic paths" },
+  { kind: ProcessKind.Isochoric, label: "Isochoric", hint: "Constant volume", targets: [Prop.T, Prop.P, Prop.H, Prop.S], group: "Thermodynamic paths" },
+  { kind: ProcessKind.Isenthalpic, label: "Isenthalpic", hint: "Constant enthalpy", targets: [Prop.P, Prop.T], group: "Thermodynamic paths" },
+  { kind: ProcessKind.Compression, label: "Compressor / pump", hint: "Adiabatic, with isentropic efficiency", targets: [Prop.P], group: "Equipment" },
+  { kind: ProcessKind.Expansion, label: "Turbine / expander", hint: "Adiabatic, with isentropic efficiency", targets: [Prop.P], group: "Equipment" },
 ];
 
 const kindInfo = (k: ProcessKind) => PROCESS_KINDS.find((p) => p.kind === k)!;
 
-/** A sensible starting target for a process, relative to its inlet state. */
+/** A sensible starting target for a connection, relative to its inlet state. */
 function defaultSpec(kind: ProcessKind, target: Prop, from: ThermoState | null): ProcessSpec {
   const eff = kind === ProcessKind.Compression ? 0.8 : kind === ProcessKind.Expansion ? 0.85 : undefined;
   if (!from) return { kind, target, value: target === Prop.Q ? 1 : 1e6, efficiency: eff };
@@ -62,7 +62,7 @@ export function ProcessPanel() {
   return (
     <>
       <Section
-        title="Processes"
+        title="Connections"
         actions={chains.length > 0 ? (
           <Button variant="ghost" onClick={newChain} className="h-7 px-2 text-xs">
             <Plus size={14} /> New
@@ -76,7 +76,7 @@ export function ProcessPanel() {
       {chains.length === 0 && (
         <div className="p-4">
           <Button onClick={newChain} className="w-full">
-            <Plus size={14} /> Start a process
+            <Plus size={14} /> Start a connection
           </Button>
         </div>
       )}
@@ -108,9 +108,9 @@ function ChainEditor({ chainId, result, index }: { chainId: string; result?: Cha
           value={chain.name}
           onChange={(e) => updateChain(chain.id, { name: e.target.value })}
           className="flex-1 bg-transparent text-[13px] font-semibold text-ink outline-none"
-          aria-label="Process name"
+          aria-label="Connection name"
         />
-        <IconButton label="Delete process" onClick={() => removeChain(chain.id)}>
+        <IconButton label="Delete connection" onClick={() => removeChain(chain.id)}>
           <Trash2 size={14} />
         </IconButton>
       </div>
@@ -144,7 +144,7 @@ function ChainEditor({ chainId, result, index }: { chainId: string; result?: Cha
             </div>
             <div className="rounded-lg border border-line p-3">
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-xs font-medium text-ink-3">Step {i + 1}</span>
+            <span className="text-xs font-medium text-ink-3">Connection {i + 1}</span>
                 <div className="flex-1" />
                 <IconButton label="Remove step" onClick={() => removeStep(chain.id, st.id)}>
                   <Trash2 size={13} />
@@ -152,9 +152,9 @@ function ChainEditor({ chainId, result, index }: { chainId: string; result?: Cha
               </div>
               <div className="flex flex-col gap-2">
                 <Select
-                  label="Process type"
+                  label="Connection type"
                   value={st.spec.kind}
-                  options={PROCESS_KINDS.map((k) => ({ value: k.kind, label: k.label }))}
+                  options={PROCESS_KINDS.map((k) => ({ value: k.kind, label: k.label, group: k.group }))}
                   onChange={(kind) => updateStep(chain.id, st.id, defaultSpec(kind, kindInfo(kind).targets[0], prev))}
                 />
                 <div className="grid grid-cols-2 gap-2">
@@ -213,9 +213,9 @@ function ChainEditor({ chainId, result, index }: { chainId: string; result?: Cha
       <Button
         variant="ghost"
         className="mt-2 w-full border border-dashed border-line"
-        onClick={() => addStep(chain.id, defaultSpec(ProcessKind.Compression, Prop.P, lastState))}
+        onClick={() => addStep(chain.id, defaultSpec(ProcessKind.Isobaric, Prop.T, lastState))}
       >
-        <Plus size={14} /> Add step
+        <Plus size={14} /> Add connection
       </Button>
     </section>
   );

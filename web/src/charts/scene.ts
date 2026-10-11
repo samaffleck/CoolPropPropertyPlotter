@@ -2,6 +2,7 @@
 import { statePoint } from "../engine/curve";
 import { Prop, type ChartResult, type CycleResult, type FluidInfo, type Saturation } from "../engine/types";
 import type { ChainResult, PointResult } from "../state/compute";
+import type { ExampleSnapshot } from "../state/store";
 import { COORDINATES } from "../units/properties";
 import { formatCompact, toDisplay, unitOf, type UnitChoice } from "../units/units";
 import type { Scene, SceneLine, SceneMarker } from "./renderer";
@@ -16,17 +17,6 @@ const FAMILY_KEY: Record<Prop, string> = {
   [Prop.S]: "S",
   [Prop.U]: "H",
   [Prop.Q]: "Q",
-};
-
-const LABEL_POSITION: Record<Prop, number> = {
-  [Prop.P]: 0.55,
-  [Prop.T]: 0.4,
-  [Prop.S]: 0.7,
-  [Prop.H]: 0.25,
-  [Prop.D]: 0.82,
-  [Prop.V]: 0.82,
-  [Prop.U]: 0.3,
-  [Prop.Q]: 0.3,
 };
 
 export function familyColor(theme: ChartTheme, family: Prop) {
@@ -58,7 +48,36 @@ export interface SceneInput {
   points: PointResult[];
   chains: ChainResult[];
   cycle: CycleResult | null;
+  exampleSnapshot: ExampleSnapshot | null;
   showOverlays: { points: boolean; chains: boolean; cycle: boolean };
+}
+
+function snapshotPath(connection: ExampleSnapshot["connections"][number], points: PointResult[]): Float64Array {
+  const path = new Float64Array(connection.path.map((value) => value === null ? Number.NaN : value));
+  if (path.length < 12) return path;
+  const from = points.find((result) => result.point.id === connection.fromPointId)?.state;
+  const to = points.find((result) => result.point.id === connection.toPointId)?.state;
+  if (!from || !to) return path;
+  const oldStart = path.slice(0, 6);
+  const oldEnd = path.slice(path.length - 6);
+  const newStart = statePoint(from);
+  const newEnd = statePoint(to);
+  const vertices = path.length / 6;
+  for (let vertex = 0; vertex < vertices; vertex++) {
+    const t = vertex / (vertices - 1);
+    for (let coordinate = 0; coordinate < 6; coordinate++) {
+      const offset = vertex * 6 + coordinate;
+      if (!Number.isFinite(path[offset])) continue;
+      const startDelta = Number.isFinite(oldStart[coordinate]) && Number.isFinite(newStart[coordinate])
+        ? newStart[coordinate] - oldStart[coordinate]
+        : 0;
+      const endDelta = Number.isFinite(oldEnd[coordinate]) && Number.isFinite(newEnd[coordinate])
+        ? newEnd[coordinate] - oldEnd[coordinate]
+        : 0;
+      path[offset] += (1 - t) * startDelta + t * endDelta;
+    }
+  }
+  return path;
 }
 
 export function buildScene(o: SceneInput): Scene {
@@ -79,7 +98,6 @@ export function buildScene(o: SceneInput): Scene {
       alpha: hasOverlay ? 0.45 : 0.8,
       dash: iso.prop === Prop.Q ? [4, 3] : undefined,
       label: isolineLabel(iso.prop, iso.value, o.units),
-      labelAt: LABEL_POSITION[iso.prop],
     });
   }
   if (o.saturation) {
@@ -105,6 +123,20 @@ export function buildScene(o: SceneInput): Scene {
       if (c.start) markers.push({ point: statePoint(c.start), color });
       c.steps.forEach((st) => {
         if (st.result) markers.push({ point: statePoint(st.result.end), color });
+      });
+    });
+  }
+
+  if (o.exampleSnapshot) {
+    o.exampleSnapshot.connections.forEach((connection, index) => {
+      lines.push({
+        data: snapshotPath(connection, o.points),
+        color: theme.paths[index % theme.paths.length],
+        width: 2.5,
+        arrows: true,
+        emphasis: true,
+        label: connection.component,
+        snapshotPointIds: [connection.fromPointId, connection.toPointId],
       });
     });
   }

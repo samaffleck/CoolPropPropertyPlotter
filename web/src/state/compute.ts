@@ -58,13 +58,48 @@ export function useCatalog(): FluidSummary[] {
 export const useFluidInfo = (fluid: string) => useAsync<FluidInfo | null>(() => engine.info(fluid), [fluid]);
 export const useSaturation = (fluid: string) => useAsync<Saturation>(() => engine.saturation(fluid), [fluid]);
 
+const ISOLINE_OVERSCAN = 0.35;
+
+function withIsolineOverscan(view: Viewport): Viewport {
+  const fraction = ISOLINE_OVERSCAN;
+  const expand = (min: number, max: number, log: boolean): [number, number] => {
+    if (log) {
+      const lo = Math.log(min), span = Math.log(max) - lo;
+      return [Math.exp(lo - span * fraction), Math.exp(lo + span * (1 + fraction))];
+    }
+    const span = max - min;
+    return [min - span * fraction, max + span * fraction];
+  };
+  const [xMin, xMax] = expand(view.xMin, view.xMax, view.xLog);
+  const [yMin, yMax] = expand(view.yMin, view.yMax, view.yLog);
+  return { ...view, xMin, xMax, yMin, yMax };
+}
+
 export function useIsolines(fluid: string, view: Viewport | undefined, families: Prop[], units: UnitChoice, density: number) {
+  const selected = useRef<{ key: string; groups: { prop: Prop; values: number[] }[] } | null>(null);
+  const selectionKey = `${fluid}:${view?.x}:${view?.y}:${view?.xLog}:${view?.yLog}:${families.join(",")}:${JSON.stringify(units)}:${density}`;
   return useAsync<ChartResult | null>(
-    () =>
-      view
-        ? engine.chartAuto(fluid, view, families, units, density).then((r) => (r.ok ? r : Promise.reject(new Error(r.error))))
-        : null,
-    [fluid, view && JSON.stringify(view), families.join(","), JSON.stringify(units), density],
+    () => {
+      if (!view) return null;
+      const expanded = withIsolineOverscan(view);
+      const cached = selected.current;
+      if (cached?.key === selectionKey) {
+        return engine.chart(fluid, expanded, cached.groups).then((r) => (r.ok ? r : Promise.reject(new Error(r.error))));
+      }
+      const expandedDensity = Math.round(density * (1 + 2 * ISOLINE_OVERSCAN));
+      return engine.chartAuto(fluid, expanded, families, units, expandedDensity).then((r) => {
+        if (!r.ok) return Promise.reject(new Error(r.error));
+        const values = new Map<Prop, number[]>();
+        for (const isoline of r.isolines) {
+          const group = values.get(isoline.prop) ?? [];
+          if (!group.includes(isoline.value)) group.push(isoline.value);
+          values.set(isoline.prop, group);
+        }
+        selected.current = { key: selectionKey, groups: [...values].map(([prop, values]) => ({ prop, values })) };
+        return r;
+      });
+    },
+    [fluid, view && JSON.stringify(view), selectionKey],
     120,
   );
 }
@@ -75,15 +110,29 @@ export interface PointResult {
   error?: string;
 }
 
+const pointStateCache = new Map<string, Promise<{ state: ThermoState | null; error?: string }>>();
+
+export function computePointState(fluid: string, input: StateInput) {
+  const key = `${fluid}:${input.a}:${input.va}:${input.b}:${input.vb}`;
+  let result = pointStateCache.get(key);
+  if (!result) {
+    result = engine.state(fluid, input)
+      .then((r) => r.ok ? { state: r.state } : { state: null, error: r.error })
+      .catch((error: Error) => {
+        pointStateCache.delete(key);
+        throw error;
+      });
+    pointStateCache.set(key, result);
+    if (pointStateCache.size > 128) pointStateCache.delete(pointStateCache.keys().next().value!);
+  }
+  return result;
+}
+
 export function usePointStates(fluid: string, points: PinnedPoint[]) {
   return useAsync<PointResult[]>(
-    () =>
-      Promise.all(
-        points.map(async (point) => {
-          const r = await engine.state(fluid, point.input);
-          return r.ok ? { point, state: r.state } : { point, state: null, error: r.error };
-        }),
-      ),
+    () => Promise.all(points.map(async (point) => {
+      return { point, ...(await computePointState(fluid, point.input)) };
+    })),
     [fluid, JSON.stringify(points)],
   );
 }

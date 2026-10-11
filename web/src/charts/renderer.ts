@@ -11,7 +11,7 @@ export interface SceneLine {
   dash?: number[];
   alpha?: number;
   label?: string;
-  labelAt?: number; // preferred position along the visible part, 0..1
+  snapshotPointIds?: [string, string];
   arrows?: boolean;
   fill?: string; // fill the closed polygon
   emphasis?: boolean; // drawn above everything else
@@ -99,6 +99,7 @@ export class Renderer {
   snapToLine(pos: { px: number; py: number }, scene: Scene, view: View, radius = 10) {
     const { x, y } = this.axes(view);
     let best: { px: number; py: number; x: number; y: number; distance: number } | null = null;
+    let bestLabel: { label: string; color: string; distance: number } | null = null;
     for (const line of scene.lines) {
       const n = curveLength(line.data);
       for (let i = 1; i < n; i++) {
@@ -112,12 +113,15 @@ export class Renderer {
         const t = Math.max(0, Math.min(1, ((pos.px - px0) * dx + (pos.py - py0) * dy) / (dx * dx + dy * dy || 1)));
         const px = px0 + t * dx, py = py0 + t * dy;
         const distance = Math.hypot(pos.px - px, pos.py - py);
+        if (line.label && distance <= radius && (!bestLabel || distance < bestLabel.distance)) {
+          bestLabel = { label: line.label, color: line.color, distance };
+        }
         if (distance <= radius && (!best || distance < best.distance)) {
           best = { px, py, x: x.fromPx(px), y: y.fromPx(py), distance };
         }
       }
     }
-    return best;
+    return best ? { ...best, label: bestLabel?.label, labelColor: bestLabel?.color } : null;
   }
 
   axes(view: View): { x: Axis; y: Axis } {
@@ -155,8 +159,6 @@ export class Renderer {
       clampPx(ay.toPx(curveValue(d, i, view.y))),
     ];
     const ordered = [...o.scene.lines.filter((l) => !l.emphasis), ...o.scene.lines.filter((l) => l.emphasis)];
-    const screen = new Map<SceneLine, [number, number][][]>();
-
     for (const line of ordered) {
       const runs: [number, number][][] = [];
       let run: [number, number][] = [];
@@ -171,8 +173,6 @@ export class Renderer {
         }
       }
       if (run.length) runs.push(run);
-      screen.set(line, runs);
-
       ctx.globalAlpha = line.alpha ?? 1;
       if (line.fill) {
         ctx.fillStyle = line.fill;
@@ -199,19 +199,9 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    // Markers: merge coincident ones, then reserve label positions so isoline labels avoid them.
+    // Markers: merge coincident ones, then reserve label positions for marker labels.
     const placed: Box[] = [];
     const markers = this.layoutMarkers(o.scene.markers, project, plot, placed, theme);
-
-    // Isoline labels, placed greedily to avoid collisions.
-    ctx.font = `500 11px ${theme.font}`;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    const inset = { x0: plot.x0 + 4, y0: plot.y0 + 4, x1: plot.x1 - 4, y1: plot.y1 - 4 };
-    for (const line of ordered) {
-      if (!line.label) continue;
-      this.placeLabel(line, screen.get(line) ?? [], inset, placed, theme);
-    }
 
     // Markers
     for (const m of markers) {
@@ -388,64 +378,4 @@ export class Renderer {
     }
   }
 
-  private placeLabel(line: SceneLine, runs: [number, number][][], inset: Box, placed: Box[], theme: Theme) {
-    const { ctx } = this;
-    const inside = (p: [number, number]) => p[0] > inset.x0 && p[0] < inset.x1 && p[1] > inset.y0 && p[1] < inset.y1;
-    // Longest visible stretch of the line.
-    let best: [number, number][] = [];
-    for (const r of runs) {
-      let cur: [number, number][] = [];
-      for (const p of r) {
-        if (inside(p)) {
-          cur.push(p);
-        } else {
-          if (cur.length > best.length) best = cur;
-          cur = [];
-        }
-      }
-      if (cur.length > best.length) best = cur;
-    }
-    if (best.length < 2) return;
-    const cum = [0];
-    for (let i = 1; i < best.length; i++) {
-      cum.push(cum[i - 1] + Math.hypot(best[i][0] - best[i - 1][0], best[i][1] - best[i - 1][1]));
-    }
-    const total = cum[cum.length - 1];
-    const text = line.label!;
-    const w = ctx.measureText(text).width + 6;
-    if (total < w * 1.6) return;
-    const at = (s: number): [number, number] => {
-      let i = 1;
-      while (i < cum.length - 1 && cum[i] < s) i++;
-      const t = (s - cum[i - 1]) / Math.max(1e-9, cum[i] - cum[i - 1]);
-      return [best[i - 1][0] + t * (best[i][0] - best[i - 1][0]), best[i - 1][1] + t * (best[i][1] - best[i - 1][1])];
-    };
-    const pref = line.labelAt ?? 0.5;
-    for (const f of [pref, pref + 0.15, pref - 0.15, pref + 0.3, pref - 0.3, 0.85, 0.15]) {
-      if (f < 0.08 || f > 0.92) continue;
-      const s = f * total;
-      const [cx, cy] = at(s);
-      const [ax, ay] = at(Math.max(0, s - w / 2));
-      const [bx, by] = at(Math.min(total, s + w / 2));
-      let ang = Math.atan2(by - ay, bx - ax);
-      if (ang > Math.PI / 2) ang -= Math.PI;
-      if (ang < -Math.PI / 2) ang += Math.PI;
-      const hw = (Math.abs(Math.cos(ang)) * w + Math.abs(Math.sin(ang)) * 12) / 2;
-      const hh = (Math.abs(Math.sin(ang)) * w + Math.abs(Math.cos(ang)) * 12) / 2;
-      const box = { x0: cx - hw, y0: cy - hh, x1: cx + hw, y1: cy + hh };
-      if (box.x0 < inset.x0 || box.x1 > inset.x1 || box.y0 < inset.y0 || box.y1 > inset.y1) continue;
-      if (placed.some((b) => overlaps(b, box))) continue;
-      placed.push(box);
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(ang);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = theme.surface;
-      ctx.strokeText(text, 0, 0);
-      ctx.fillStyle = line.color;
-      ctx.fillText(text, 0, 0);
-      ctx.restore();
-      return;
-    }
-  }
 }

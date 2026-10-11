@@ -94,7 +94,7 @@ export function Select<T extends string | number>({
   id,
 }: {
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; group?: string }[];
   onChange: (v: T) => void;
   label?: string;
   className?: string;
@@ -112,11 +112,23 @@ export function Select<T extends string | number>({
         }}
         className="h-8 w-full appearance-none rounded-md border border-line bg-surface pl-2 pr-7 text-[13px] text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
       >
-        {options.map((o) => (
-          <option key={String(o.value)} value={String(o.value)}>
-            {o.label}
-          </option>
-        ))}
+        {options.map((o, index) => {
+          const previous = options[index - 1];
+          const nextGroup = o.group && o.group !== previous?.group;
+          if (nextGroup) {
+            const group = o.group!;
+            const optionsInGroup = options.filter((option) => option.group === group);
+            return (
+              <optgroup key={group} label={group}>
+                {optionsInGroup.map((option) => (
+                  <option key={String(option.value)} value={String(option.value)}>{option.label}</option>
+                ))}
+              </optgroup>
+            );
+          }
+          if (o.group) return null;
+          return <option key={String(o.value)} value={String(o.value)}>{o.label}</option>;
+        })}
       </select>
       <ChevronDown size={14} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-3" />
     </div>

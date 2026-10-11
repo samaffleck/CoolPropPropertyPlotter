@@ -106,7 +106,7 @@ export const CYCLES: CycleDef[] = [
     id: "linde_hampson",
     name: "Linde–Hampson liquefier",
     category: "Liquefaction",
-    summary: "Isothermal compression, recuperator and Joule–Thomson valve.",
+    summary: "Isothermal compressor model, recuperator and Joule–Thomson valve.",
     description:
       "The simplest liquefier. High-pressure gas is cooled by the returning cold vapour and throttled; the liquid fraction is drawn off and replaced by make-up gas. Only works for gases whose Joule–Thomson inversion temperature lies above ambient, so hydrogen, helium and neon need precooling (lower the warm-end temperature to model it).",
     fluids: ["Nitrogen", "Argon", "Air", "Methane", "Oxygen", "Hydrogen"],
@@ -114,7 +114,7 @@ export const CYCLES: CycleDef[] = [
       { key: "p_high", label: "High pressure", quantity: "pressure", default: bar(200) },
       { key: "p_low", label: "Low pressure", quantity: "pressure", default: 101325 },
       { key: "T_ambient", label: "Warm-end temperature", quantity: "temperature", default: 300 },
-      efficiency("eta_iso", "Compressor isothermal efficiency", 0.6),
+      efficiency("eta_iso", "Compressor efficiency (isothermal model)", 0.6),
       { key: "dT_warm", label: "Warm-end temperature difference", quantity: "temperature_difference", default: 0, min: 0 },
     ],
     presets: {
@@ -137,7 +137,7 @@ export const CYCLES: CycleDef[] = [
       { key: "T_exp_in", label: "Expander inlet temperature", quantity: "temperature", default: 200 },
       { key: "exp_fraction", label: "Expander flow fraction", quantity: "fraction", default: 0.6, min: 0.01, max: 0.99 },
       efficiency("eta_exp", "Expander isentropic efficiency", 0.8),
-      efficiency("eta_iso", "Compressor isothermal efficiency", 0.6),
+      efficiency("eta_iso", "Compressor efficiency (isothermal model)", 0.6),
       { key: "dT_warm", label: "Warm-end temperature difference", quantity: "temperature_difference", default: 0, min: 0 },
       { key: "recover_work", label: "Recover expander work", quantity: "ratio", default: 1, toggle: true },
     ],

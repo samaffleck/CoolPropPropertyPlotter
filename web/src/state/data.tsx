@@ -2,7 +2,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { CycleResult, FluidInfo, Saturation } from "../engine/types";
 import { useChains, useCycle, useFluidInfo, usePointStates, useSaturation, type ChainResult, type PointResult } from "./compute";
-import { useStore } from "./store";
+import { useStore, type ExampleSnapshot } from "./store";
 
 interface Data {
   info: FluidInfo | null;
@@ -13,6 +13,7 @@ interface Data {
   cycle: CycleResult | null;
   cycleError: string | null;
   cycleLoading: boolean;
+  exampleSnapshot: ExampleSnapshot | null;
 }
 
 const Ctx = createContext<Data | null>(null);
@@ -24,6 +25,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const chains = useStore((s) => s.chains);
   const cycleId = useStore((s) => s.cycleId);
   const cycleParams = useStore((s) => s.cycleParams);
+  const exampleSnapshot = useStore((s) => s.exampleSnapshot);
 
   const info = useFluidInfo(fluid);
   const saturation = useSaturation(fluid);
@@ -40,6 +42,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     cycle: cycle.data?.ok ? cycle.data.result : null,
     cycleError: cycle.data && !cycle.data.ok ? cycle.data.error : cycle.error,
     cycleLoading: cycle.loading,
+    exampleSnapshot,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
