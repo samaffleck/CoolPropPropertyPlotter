@@ -159,32 +159,6 @@ export function ThermoChart() {
               ? []
               : [{ id, point: pending.point, color: theme.accent, label: pending.label }]),
           ],
-          lines: [
-            ...scene.lines.map((line) => {
-              const connectedPointIds = line.connectedPointIds;
-              if (!preview || !connectedPointIds?.includes(preview.id)) return line;
-              const marker = scene.markers.find((candidate) => candidate.id === preview.id);
-              if (!marker) return line;
-              const vertexCount = line.data.length / 6;
-              if (vertexCount < 2) return line;
-              const movedFrom = connectedPointIds[0] === preview.id;
-              const data = line.data.slice();
-              for (let vertex = 0; vertex < vertexCount; vertex++) {
-                const t = vertex / (vertexCount - 1);
-                const weight = movedFrom ? 1 - t : t;
-                const point = data.subarray(vertex * 6, vertex * 6 + 6);
-                for (const prop of [chart.x, chart.y]) {
-                  const oldValue = curveValue(marker.point, 0, prop);
-                  const newValue = curveValue(preview.point, 0, prop);
-                  const pathValue = curveValue(data, vertex, prop);
-                  if (Number.isFinite(pathValue) && Number.isFinite(oldValue) && Number.isFinite(newValue)) {
-                    setCoordinate(point, prop, pathValue + weight * (newValue - oldValue));
-                  }
-                }
-              }
-              return { ...line, data };
-            }),
-          ],
         }
       : scene;
     r.render({
