@@ -91,9 +91,15 @@ export function buildScene(o: SceneInput): Scene {
       const color = theme.paths[ci % theme.paths.length];
       for (const st of c.steps) {
         if (!st.result) continue;
-        lines.push({ data: st.result.path, color, width: 2.5, arrows: true, emphasis: true });
-        markers.push({ point: statePoint(st.result.start), color });
-        markers.push({ point: statePoint(st.result.end), color });
+        const connection = c.chain.steps.find((step) => step.id === st.id);
+        const endpoints: [string, string] | undefined = connection?.fromPointId && connection.toPointId
+          ? [connection.fromPointId, connection.toPointId]
+          : undefined;
+        lines.push({ data: st.result.path, color, width: 2.5, arrows: true, emphasis: true, connectedPointIds: endpoints });
+        if (!endpoints) {
+          markers.push({ point: statePoint(st.result.start), color });
+          markers.push({ point: statePoint(st.result.end), color });
+        }
       }
       if (c.start && !c.chain.steps.some((st) => st.fromPointId && st.toPointId)) markers.push({ point: statePoint(c.start), color });
     });

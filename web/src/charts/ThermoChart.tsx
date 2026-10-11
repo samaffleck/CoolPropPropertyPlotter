@@ -161,12 +161,13 @@ export function ThermoChart() {
           ],
           lines: [
             ...scene.lines.map((line) => {
-              if (!preview || !line.snapshotPointIds?.includes(preview.id)) return line;
+              const connectedPointIds = line.connectedPointIds;
+              if (!preview || !connectedPointIds?.includes(preview.id)) return line;
               const marker = scene.markers.find((candidate) => candidate.id === preview.id);
               if (!marker) return line;
               const vertexCount = line.data.length / 6;
               if (vertexCount < 2) return line;
-              const movedFrom = line.snapshotPointIds[0] === preview.id;
+              const movedFrom = connectedPointIds[0] === preview.id;
               const data = line.data.slice();
               for (let vertex = 0; vertex < vertexCount; vertex++) {
                 const t = vertex / (vertexCount - 1);
@@ -297,7 +298,7 @@ export function ThermoChart() {
     const pointers = new Map<number, { px: number; py: number }>();
     let recentClickActions: string[] = [];
     let drag: { px: number; py: number; vp: Viewport; moved: boolean } | null = null;
-    let pointDrag: { id: string; marker: (typeof scene.markers)[number]; moved: boolean; input?: StateInput; last: { px: number; py: number } } | null = null;
+    let pointDrag: { id: string; marker: (typeof scene.markers)[number]; pointInput?: StateInput; moved: boolean; input?: StateInput; last: { px: number; py: number } } | null = null;
     let pinch: { d: number; vp: Viewport; mx: number; my: number } | null = null;
     const findPoint = (pos: { px: number; py: number }, vp: Viewport) => {
       const r = rendererRef.current;
@@ -333,7 +334,8 @@ export function ThermoChart() {
       } else {
         const marker = findPoint(pos, vp);
         if (marker?.id) {
-          pointDrag = { id: marker.id, marker, moved: false, last: pos };
+          const pointInput = statePoints.find((point) => point.id === marker.id)?.input;
+          pointDrag = { id: marker.id, marker, pointInput, moved: false, last: pos };
           drag = null;
           canvas.style.cursor = "grabbing";
         } else {
@@ -356,7 +358,14 @@ export function ThermoChart() {
           const { x, y } = r.axes(viewRef.current);
           const px = Math.max(MARGIN.left, Math.min(r.width - MARGIN.right, pos.px));
           const py = Math.max(MARGIN.top, Math.min(r.height - MARGIN.bottom, pos.py));
-          const snapped = r.snapToLine({ px, py }, scene, viewRef.current);
+          const hasConnectedPath = scene.lines.some((line) => line.connectedPointIds?.includes(pointDrag!.id));
+          const snapped = r.snapToLine(
+            { px, py },
+            scene,
+            viewRef.current,
+            10,
+            hasConnectedPath ? (line) => line.connectedPointIds?.includes(pointDrag!.id) === true : undefined,
+          );
           const xValue = snapped?.x ?? x.fromPx(px);
           const yValue = snapped?.y ?? y.fromPx(py);
           const preview = pointDrag.marker.point.slice();
@@ -423,7 +432,17 @@ export function ThermoChart() {
         setSelectedPointId(completed.id);
         if (completed.moved && completed.input) {
           void engine.state(fluid, completed.input).then((result) => {
-            if (result.ok) updatePoint(completed.id, { input: completed.input });
+            if (result.ok) {
+              const input = completed.pointInput
+                ? {
+                    a: completed.pointInput.a,
+                    va: stateValue(result.state, completed.pointInput.a),
+                    b: completed.pointInput.b,
+                    vb: stateValue(result.state, completed.pointInput.b),
+                  }
+                : completed.input;
+              updatePoint(completed.id, { input });
+            }
             else if (draggedMarkerRef.current?.id === completed.id) {
               draggedMarkerRef.current = null;
               schedule();
@@ -502,7 +521,7 @@ export function ThermoChart() {
       canvas.removeEventListener("pointerleave", onLeave);
       canvas.removeEventListener("dblclick", onDouble);
     };
-  }, [updateView, schedule, chart, chartId, addPoint, updatePoint, removePoint, setView, scene, mode, fluid, data.points]);
+  }, [updateView, schedule, chart, chartId, addPoint, updatePoint, removePoint, setView, scene, mode, fluid, data.points, statePoints]);
 
   // ---- fit to overlay content ----
   const fit = useCallback(() => {

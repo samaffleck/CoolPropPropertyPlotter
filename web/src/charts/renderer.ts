@@ -11,7 +11,7 @@ export interface SceneLine {
   dash?: number[];
   alpha?: number;
   label?: string;
-  snapshotPointIds?: [string, string];
+  connectedPointIds?: [string, string];
   arrows?: boolean;
   fill?: string; // fill the closed polygon
   emphasis?: boolean; // drawn above everything else
@@ -96,11 +96,12 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  snapToLine(pos: { px: number; py: number }, scene: Scene, view: View, radius = 10) {
+  snapToLine(pos: { px: number; py: number }, scene: Scene, view: View, radius = 10, includeLine?: (line: SceneLine) => boolean) {
     const { x, y } = this.axes(view);
     let best: { px: number; py: number; x: number; y: number; distance: number } | null = null;
     let bestLabel: { label: string; color: string; distance: number } | null = null;
     for (const line of scene.lines) {
+      if (includeLine && !includeLine(line)) continue;
       const n = curveLength(line.data);
       for (let i = 1; i < n; i++) {
         const x0 = curveValue(line.data, i - 1, view.x);
