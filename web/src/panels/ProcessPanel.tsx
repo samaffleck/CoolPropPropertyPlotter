@@ -114,7 +114,7 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
   };
 
   return (
-    <section className="border-b border-line px-4 py-3">
+    <section className="border-b-0 px-4 py-3">
       {chain.steps.map((step) => {
         const resultStep = result?.steps.find((candidate) => candidate.id === step.id);
         const fromId = step.fromPointId ?? "";
