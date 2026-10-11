@@ -1,8 +1,12 @@
-# ThermoPlot
+<p align="center">
+  <img src="web/public/favicon.svg" alt="ThermoPlot logo" width="72" height="72">
+</p>
 
-ThermoPlot is a browser-based tool for exploring thermodynamic properties and analyzing process and cycle performance. It is designed for refrigeration, cryogenics, liquefaction, and power applications.
+<h1 align="center">ThermoPlot</h1>
 
-**Try it:** [cool-prop-property-plotter-six.vercel.app](https://cool-prop-property-plotter-six.vercel.app/)
+<p align="center">Thermodynamic charts and cycle analysis for refrigeration, cryogenics, liquefaction, and power.</p>
+
+<p align="center"><a href="https://thermoplot.com">thermoplot.com</a></p>
 
 ## Features
 
