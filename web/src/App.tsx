@@ -22,7 +22,7 @@ function HomePage({ onOpen }: { onOpen: () => void }) {
         <h1 className="type-display text-4xl font-medium tracking-[-0.045em] text-ink sm:text-5xl">ThermoPlot</h1>
         <p className="mt-3 text-sm text-ink-3">Thermodynamics, made visible.</p>
         <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-          <button onClick={onOpen} className="h-11 rounded-full bg-ink px-6 text-sm font-medium text-surface transition hover:opacity-85">
+          <button onClick={onOpen} className="h-11 cursor-pointer rounded-full bg-ink px-6 text-sm font-medium text-surface transition hover:opacity-85">
             Open editor
           </button>
           <a href={GITHUB} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-2 rounded-full border border-line px-5 text-sm text-ink-2 transition hover:bg-surface-2 hover:text-ink">

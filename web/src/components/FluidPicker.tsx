@@ -110,9 +110,6 @@ export function FluidPicker() {
                   <span className="w-4">{f.name === fluid && <Check size={14} className="text-accent" />}</span>
                   <span className="flex-1 truncate">
                     <span className="text-[13px] text-ink">{f.name}</span>
-                    {f.aliases && (
-                      <span className="ml-2 text-[11px] text-ink-3">{f.aliases.split(",").filter((a) => a.toUpperCase() !== f.name.toUpperCase())[0]}</span>
-                    )}
                   </span>
                 </button>
               </li>

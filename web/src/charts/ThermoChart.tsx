@@ -6,6 +6,7 @@ import { Prop, type StateInput, type Viewport } from "../engine/types";
 import { computePointState, useIsolines } from "../state/compute";
 import { useData } from "../state/data";
 import type { PointResult } from "../state/compute";
+import { inputValue, sharedPropertyForProcess } from "../state/connections";
 import { useStore } from "../state/store";
 import { COORDINATES, stateValue } from "../units/properties";
 import { formatNumber, fromDisplay, toDisplay, unitOf } from "../units/units";
@@ -76,12 +77,9 @@ export function ThermoChart() {
   const drawRef = useRef<() => void>(() => {});
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedPointCardRef = useRef<HTMLElement | null>(null);
-  const [readout, setReadout] = useState<{ x: number; y: number; line?: { label: string; color: string } } | null>(null);
-  const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
   const selectedPoint = data.points.find(({ point }) => point.id === selectedPointId);
   const selectedPointRecord = statePoints.find((point) => point.id === selectedPointId);
   const selectedPointForCard = selectedPoint ?? (selectedPointRecord ? { point: selectedPointRecord, state: null } : undefined);
-  const hoveredPoint = data.points.find(({ point }) => point.id === hoveredPointId);
   const schedule = useCallback(() => {
     if (!frame.current) frame.current = requestAnimationFrame(() => drawRef.current());
   }, []);
@@ -366,9 +364,8 @@ export function ThermoChart() {
           setCoordinate(preview, chart.y, yValue);
           pointDrag.input = { a: chart.x, va: xValue, b: chart.y, vb: yValue };
           draggedMarkerRef.current = { id: pointDrag.id, point: preview, input: pointDrag.input };
-          setHoveredPointId(null);
+          setSelectedPointId(pointDrag.id);
           hoverRef.current = null;
-          setReadout(null);
           schedule();
         }
         return;
@@ -393,40 +390,25 @@ export function ThermoChart() {
           [next.xMin, next.xMax] = x.panned(dx);
           [next.yMin, next.yMax] = y.panned(dy);
           hoverRef.current = null;
-          setHoveredPointId(null);
-          setReadout(null);
           updateView(next);
           return;
         }
       }
-      // Hover readout.
+      // Hover crosshair snaps to nearby isolines without showing a values box.
       const vp = viewRef.current;
       if (!vp || !r) return;
       const marker = e.pointerType === "touch" ? null : findPoint(pos, vp);
       if (e.pointerType !== "touch") canvas.style.cursor = marker ? "grab" : "crosshair";
       if (e.pointerType === "touch") {
-        setHoveredPointId(null);
         return;
       }
       if (region(pos.px, pos.py) !== "plot" || pos.px > r.width - MARGIN.right || pos.py < MARGIN.top) {
-        setHoveredPointId(null);
         hoverRef.current = null;
-        setReadout(null);
         schedule();
         return;
       }
-      setHoveredPointId(marker?.id ?? null);
-      const { x, y } = r.axes(vp);
       const snapped = r.snapToLine(pos, scene, vp);
-      const line = snapped?.label && snapped.labelColor ? { label: snapped.label, color: snapped.labelColor } : undefined;
-      const xValue = snapped?.x ?? x.fromPx(pos.px);
-      const yValue = snapped?.y ?? y.fromPx(pos.py);
       hoverRef.current = snapped ? { px: snapped.px, py: snapped.py } : pos;
-      setReadout({
-        x: xValue,
-        y: yValue,
-        line,
-      });
       schedule();
     };
     const onUp = (e: PointerEvent) => {
@@ -472,9 +454,7 @@ export function ThermoChart() {
             label: point.label,
           });
         }
-        setHoveredPointId(null);
         hoverRef.current = null;
-        setReadout(null);
         setSelectedPointId(id);
         recentClickActions.push(id);
         schedule();
@@ -488,8 +468,6 @@ export function ThermoChart() {
     };
     const onLeave = () => {
       hoverRef.current = null;
-      setHoveredPointId(null);
-      setReadout(null);
       schedule();
     };
     const onDouble = (e: MouseEvent) => {
@@ -675,11 +653,7 @@ export function ThermoChart() {
           aria-label={`${chart.title} chart for ${fluid}`}
           role="img"
         />
-        {hoveredPoint?.state ? (
-          <Readout x={0} y={0} chart={chart} point={hoveredPoint} />
-        ) : readout?.line ? (
-          <Readout {...readout} chart={chart} />
-        ) : selectedPointForCard ? (
+        {selectedPointForCard ? (
           <SelectedPointCard
             cardRef={selectedPointCardRef}
             point={selectedPointForCard}
@@ -687,12 +661,11 @@ export function ThermoChart() {
             fluid={fluid}
             onClose={() => setSelectedPointId(null)}
           />
-        ) : readout ? <Readout {...readout} chart={chart} /> : null}
+        ) : null}
       </div>
     </div>
   );
 }
-
 function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
   cardRef: React.RefObject<HTMLElement | null>;
   point: PointResult;
@@ -702,9 +675,21 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
 }) {
   const units = useStore((s) => s.units);
   const updatePoint = useStore((s) => s.updatePoint);
+  const chains = useStore((s) => s.chains);
   const state = point.state!;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [specifiedProps, setSpecifiedProps] = useState<Prop[]>([point.point.input.a, point.point.input.b]);
+  const [specifiedValues, setSpecifiedValues] = useState<Partial<Record<Prop, number>>>({});
+  const lockedProps = new Set(chains.flatMap((chain) => chain.steps.flatMap((step) => {
+    if (step.fromPointId !== point.point.id && step.toPointId !== point.point.id) return [];
+    const prop = sharedPropertyForProcess(step.spec.kind);
+    return prop !== null && inputValue(point.point.input, prop) !== undefined ? [prop] : [];
+  })));
+  useEffect(() => {
+    setSpecifiedProps([point.point.input.a, point.point.input.b]);
+    setSpecifiedValues({});
+  }, [point.point.id, point.point.input.a, point.point.input.va, point.point.input.b, point.point.input.vb]);
   if (!point.state) {
     return (
       <ValueBox ref={cardRef} title={`State ${point.point.label}`} ariaLabel={`State ${point.point.label}`} onClose={onClose} interactive>
@@ -714,40 +699,98 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
   }
   const baseFields: Prop[] = [Prop.T, Prop.P, Prop.H, Prop.S, Prop.D, Prop.Q];
   const fields = [...baseFields, ...[chart.x, chart.y].filter((prop) => !baseFields.includes(prop))];
-  const commitValue = async (prop: Prop, displayValue: number) => {
-    const unit = unitOf(units, COORDINATES[prop].quantity);
-    const value = fromDisplay(unit, displayValue);
-    const anchor = prop === chart.x ? chart.y : prop === chart.y ? chart.x : chart.x;
-    const input: StateInput = { a: anchor, va: stateValue(state, anchor), b: prop, vb: value };
+  const applySpecifiedProps = async (props: Prop[], valueOverrides: Partial<Record<Prop, number>> = {}) => {
+    if (props.length !== 2) return false;
+    const input: StateInput = {
+      a: props[0], va: valueOverrides[props[0]] ?? specifiedValues[props[0]] ?? stateValue(state, props[0]),
+      b: props[1], vb: valueOverrides[props[1]] ?? specifiedValues[props[1]] ?? stateValue(state, props[1]),
+    };
     setSaving(true);
     setError(null);
     try {
       const result = await computePointState(fluid, input);
       if (!result.state) {
         setError(result.error ?? "Could not calculate that state.");
+        setSpecifiedProps([point.point.input.a, point.point.input.b]);
+        setSpecifiedValues({});
         return false;
       }
       updatePoint(point.point.id, { input });
+      setSpecifiedValues({});
       return true;
     } catch {
       setError("Could not calculate that state.");
+      setSpecifiedProps([point.point.input.a, point.point.input.b]);
+      setSpecifiedValues({});
       return false;
     } finally {
       setSaving(false);
     }
   };
+  const commitSpecifiedValue = async (prop: Prop, displayValue: number) => {
+    const unit = unitOf(units, COORDINATES[prop].quantity);
+    const value = fromDisplay(unit, displayValue);
+    setSpecifiedValues((current) => ({ ...current, [prop]: value }));
+    if (specifiedProps.length !== 2) return true;
+    return applySpecifiedProps(specifiedProps, { [prop]: value });
+  };
+  const toggleSpecifiedProp = (prop: Prop, checked: boolean) => {
+    if (saving) return;
+    if (checked) {
+      if (specifiedProps.includes(prop) || specifiedProps.length >= 2) return;
+      const rawValue = stateValue(state, prop);
+      const value = specifiedValues[prop] ?? (prop === Prop.Q && (!Number.isFinite(rawValue) || rawValue < 0 || rawValue > 1) ? 0.5 : rawValue);
+      setSpecifiedValues((current) => ({ ...current, [prop]: value }));
+      const next = [...specifiedProps, prop];
+      setSpecifiedProps(next);
+      if (next.length === 2) void applySpecifiedProps(next, { [prop]: value });
+    } else {
+      setSpecifiedProps(specifiedProps.filter((selected) => selected !== prop));
+    }
+  };
   return (
     <ValueBox ref={cardRef} title={`State ${point.point.label}`} ariaLabel={`State ${point.point.label}`} onClose={onClose} interactive>
+        {specifiedProps.length !== 2 && (
+          <div className="mb-1 text-[10px] text-ink-3">
+            {specifiedProps.length === 0 ? "Select two properties to define this state." : "Choose one more property to define this state."}
+          </div>
+        )}
         {fields.map((prop) => {
           const label = COORDINATES[prop].label;
           const unit = unitOf(units, COORDINATES[prop].quantity);
           const rawValue = stateValue(state, prop);
           const available = prop !== Prop.Q || (Number.isFinite(rawValue) && rawValue >= 0 && rawValue <= 1);
           const displayValue = available ? toDisplay(unit, rawValue) : null;
+          const specified = specifiedProps.includes(prop);
+          const locked = lockedProps.has(prop);
+          const checked = specified || locked;
+          const specifiedValue = toDisplay(unit, specifiedValues[prop] ?? (available ? rawValue : prop === Prop.Q ? 0.5 : rawValue));
           return (
-            <ValueRow key={label} label={label} unit={unit.label}>
-              {displayValue === null ? <span className="w-[9ch] text-right font-mono text-ink-3">—</span> : (
-                <InlineEditableValue label={label} value={displayValue} disabled={saving || prop === Prop.Q && !available} onCommit={(next) => commitValue(prop, next)} />
+            <ValueRow
+              key={label}
+              label={label}
+              unit={unit.label}
+              prefix={(
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={saving || locked || !specified && specifiedProps.length >= 2}
+                  onChange={(event) => toggleSpecifiedProp(prop, event.target.checked)}
+                  aria-label={locked ? `${label} is required by its connection` : `${label} is ${specified ? "specified" : "calculated"}`}
+                  title={locked ? "Required by connection" : specified ? "Specified property" : "Calculated property"}
+                  className="size-3.5 cursor-pointer accent-accent disabled:cursor-default"
+                />
+              )}
+            >
+              {specified ? (
+                <InlineEditableValue
+                  label={label}
+                  value={specifiedValue}
+                  disabled={saving}
+                  onCommit={(next) => commitSpecifiedValue(prop, next)}
+                />
+              ) : displayValue === null ? <span className="w-[9ch] text-right font-mono text-ink-3">—</span> : (
+                <span className="w-[9ch] text-right font-mono text-ink-2">{formatNumber(displayValue, 4)}</span>
               )}
             </ValueRow>
           );
@@ -788,9 +831,10 @@ const ValueBox = forwardRef<HTMLElement, ValueBoxProps>(function ValueBox({
   );
 });
 
-function ValueRow({ label, unit, children }: { label: string; unit: string; children: ReactNode }) {
+function ValueRow({ label, unit, prefix, children }: { label: string; unit: string; prefix?: ReactNode; children: ReactNode }) {
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(9ch,1fr)_max-content] items-baseline gap-1 py-1.5 first:pt-0 last:pb-0">
+    <div className={`grid min-w-0 ${prefix === undefined ? "grid-cols-[minmax(0,1fr)_minmax(9ch,1fr)_max-content]" : "grid-cols-[16px_minmax(0,1fr)_minmax(9ch,1fr)_max-content]"} items-baseline gap-1 py-1.5 first:pt-0 last:pb-0`}>
+      {prefix}
       <div className="min-w-0 truncate text-xs text-ink-3">{label}</div>
       <div className="flex min-w-0 w-full justify-end tabular text-right text-ink">{children}</div>
       <div className="whitespace-nowrap text-left text-ink-3">{unit}</div>
@@ -859,44 +903,5 @@ function InlineEditableValue({ label, value, disabled, onCommit }: {
         {formatNumber(value, 4)}
       </button>
     </span>
-  );
-}
-
-function Readout({ x, y, chart, line, point }: {
-  x: number;
-  y: number;
-  chart: ReturnType<typeof chartById>;
-  line?: { label: string; color: string };
-  point?: PointResult;
-}) {
-  const units = useStore((s) => s.units);
-  if (point?.state) {
-    const fields: Prop[] = [Prop.T, Prop.P, Prop.H, Prop.S, Prop.D, Prop.Q];
-    return (
-      <ValueBox title={`State ${point.point.label}`} ariaLabel={`State ${point.point.label}`}>
-        {fields.map((prop) => {
-          const meta = COORDINATES[prop];
-          const unit = unitOf(units, meta.quantity);
-          const rawValue = stateValue(point.state!, prop);
-          const value = prop !== Prop.Q || (Number.isFinite(rawValue) && rawValue >= 0 && rawValue <= 1)
-            ? formatNumber(toDisplay(unit, rawValue), 4)
-            : "—";
-          return <ValueRow key={prop} label={meta.label} unit={value === "—" ? "" : unit.label}><span className="w-[9ch] text-right font-mono text-ink">{value}</span></ValueRow>;
-        })}
-      </ValueBox>
-    );
-  }
-  const xUnit = unitOf(units, COORDINATES[chart.x].quantity);
-  const yUnit = unitOf(units, COORDINATES[chart.y].quantity);
-  const rows: [string, number, string][] = [
-    [COORDINATES[chart.x].label, toDisplay(xUnit, x), xUnit.label],
-    [COORDINATES[chart.y].label, toDisplay(yUnit, y), yUnit.label],
-  ];
-  return (
-    <ValueBox title={line?.label} titleColor={line?.color} ariaLabel={line ? `Cursor coordinates on ${line.label}` : "Cursor coordinates"}>
-      {rows.map(([label, value, unit]) => (
-        <ValueRow key={label} label={label} unit={unit}><span className="w-[9ch] text-right font-mono text-ink">{formatNumber(value, 5)}</span></ValueRow>
-      ))}
-    </ValueBox>
   );
 }

@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { CHARTS, type ChartId } from "../charts/charts";
 import { cycleById, CYCLES } from "../cycles/catalog";
 import { ProcessKind, Prop, type ProcessSpec, type StateInput, type Viewport } from "../engine/types";
+import { inputValue, setInputValue, sharedPropertyForProcess } from "./connections";
 import { UNIT_SYSTEMS, type Quantity, type UnitChoice } from "../units/units";
 
 export type Mode = "explore" | "process" | "cycle";
@@ -163,7 +164,47 @@ export const useStore = create<AppState>()(
         return id;
       },
       setSelectedPoint: (id) => set({ selectedPointId: id }),
-      updatePoint: (id, patch) => set((s) => ({ points: s.points.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
+      updatePoint: (id, patch) => set((s) => {
+        const previous = s.points.find((point) => point.id === id);
+        if (!previous) return {};
+        let nextInput = patch.input ?? previous.input;
+        if (patch.input) {
+          const lockedProps = [...new Set(s.chains.flatMap((chain) => chain.steps.flatMap((step) => {
+            if (step.fromPointId !== id && step.toPointId !== id) return [];
+            const prop = sharedPropertyForProcess(step.spec.kind);
+            return prop !== null && inputValue(previous.input, prop) !== undefined ? [prop] : [];
+          })))].slice(0, 2);
+          if (lockedProps.length >= 2 && lockedProps.some((prop) => inputValue(nextInput, prop) === undefined)) {
+            nextInput = {
+              a: lockedProps[0], va: inputValue(previous.input, lockedProps[0])!,
+              b: lockedProps[1], vb: inputValue(previous.input, lockedProps[1])!,
+            };
+          } else if (lockedProps.length === 1) {
+            const prop = lockedProps[0];
+            if (inputValue(nextInput, prop) === undefined) {
+              const otherProp = nextInput.a === prop ? nextInput.b : nextInput.a;
+              const otherValue = inputValue(nextInput, otherProp)!;
+              nextInput = { a: prop, va: inputValue(previous.input, prop)!, b: otherProp, vb: otherValue };
+            }
+          }
+        }
+        let points = s.points.map((point) => point.id === id ? { ...point, ...patch, input: nextInput } : point);
+        for (const chain of s.chains) {
+          for (const step of chain.steps) {
+            const prop = sharedPropertyForProcess(step.spec.kind);
+            if (prop === null || step.fromPointId !== id && step.toPointId !== id) continue;
+            const updated = points.find((point) => point.id === id);
+            const peerId = step.fromPointId === id ? step.toPointId : step.fromPointId;
+            const peer = points.find((point) => point.id === peerId);
+            const value = updated ? inputValue(updated.input, prop) : undefined;
+            if (!peer || value === undefined || inputValue(peer.input, prop) === undefined) continue;
+            points = points.map((point) => point.id === peerId
+              ? { ...point, input: setInputValue(point.input, prop, value) }
+              : point);
+          }
+        }
+        return { points };
+      }),
       removePoint: (id) => set((s) => {
         const snapshot = s.exampleSnapshot;
         const pointIds = Object.fromEntries(Object.entries(snapshot?.pointIds ?? {}).filter(([, pointId]) => pointId !== id));

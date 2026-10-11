@@ -96,6 +96,7 @@ function defaultView(m: Module, fluid: string, axes: AxesSpec): Viewport {
 /** Probe the viewport to find each family's value range, pick round values, and compute curves. */
 function chartAuto(m: Module, fluid: string, vp: Viewport, curveVp: Viewport, families: Prop[], units: Parameters<typeof pickIsolineValues>[3], density: number) {
   const ranges = new Map<Prop, [number, number]>(families.map((f) => [f, [Infinity, -Infinity]]));
+  const samples = new Map<Prop, number[]>(families.map((f) => [f, []]));
   const N = 10;
   for (let i = 0; i <= N; i++) {
     for (let j = 0; j <= N; j++) {
@@ -104,12 +105,25 @@ function chartAuto(m: Module, fluid: string, vp: Viewport, curveVp: Viewport, fa
       for (const f of families) {
         const v = stateValue(r.state as ThermoState, f);
         const rg = ranges.get(f)!;
-        if (Number.isFinite(v)) rg[0] = Math.min(rg[0], v), rg[1] = Math.max(rg[1], v);
+        if (Number.isFinite(v)) {
+          rg[0] = Math.min(rg[0], v), rg[1] = Math.max(rg[1], v);
+          samples.get(f)!.push(v);
+        }
       }
     }
   }
   const groups = families.map((f) => {
-    const [lo, hi] = ranges.get(f)!;
+    let [lo, hi] = ranges.get(f)!;
+    if (f === Prop.H) {
+      // Sparse, extreme flashes in broad T–s viewports can otherwise swamp the useful enthalpy range.
+      const values = samples.get(f)!.sort((a, b) => a - b);
+      if (values.length >= 10) {
+        const last = values.length - 1;
+        const robustLo = values[Math.floor(last * 0.1)];
+        const robustHi = values[Math.ceil(last * 0.9)];
+        if (robustHi > robustLo) [lo, hi] = [robustLo, robustHi];
+      }
+    }
     return { prop: f, values: pickIsolineValues(f, lo, hi, units, density) };
   });
   return m.chart(fluid, curveVp, groups);

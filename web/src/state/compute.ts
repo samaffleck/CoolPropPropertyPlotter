@@ -16,6 +16,7 @@ import {
 } from "../engine/types";
 import type { UnitChoice } from "../units/units";
 import type { PinnedPoint, ProcessChain } from "./store";
+import { inputValue, sharedPropertyForProcess } from "./connections";
 
 /** Runs `fn` whenever `deps` change and keeps the latest result; stale results are dropped. */
 function useAsync<T>(fn: () => Promise<T> | null, deps: unknown[], delay = 0): { data: T | null; loading: boolean; error: string | null } {
@@ -165,6 +166,15 @@ export function useChains(fluid: string, chains: ProcessChain[], points: PointRe
             if (!fromPoint?.state || !toPoint?.state || st.fromPointId === st.toPointId) {
               steps.push({ id: st.id, spec: st.spec, result: null, error: "Choose two different available state points." });
               continue;
+            }
+            const held = sharedPropertyForProcess(st.spec.kind);
+            if (held !== null) {
+              const fromValue = inputValue(fromPoint.point.input, held);
+              const toValue = inputValue(toPoint.point.input, held);
+              if (fromValue === undefined || toValue === undefined || Math.abs(fromValue - toValue) > Math.max(1e-6, Math.abs(fromValue) * 1e-8)) {
+                steps.push({ id: st.id, spec: st.spec, result: null });
+                continue;
+              }
             }
             const r = await engine.process(fluid, fromPoint.point.input, st.spec);
             if (!r.ok) {
