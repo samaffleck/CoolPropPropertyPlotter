@@ -126,6 +126,25 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Three text roles: interface, display, and numeric data. */
+body :not(svg):not(svg *) {
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+  font-weight: 400 !important;
+}
+
+body :not(svg):not(svg *).type-display {
+  font-family: var(--font-sans) !important;
+  font-size: 40px !important;
+  font-weight: 500 !important;
+}
+
+body :not(svg):not(svg *):is(.tabular, .font-mono) {
+  font-family: var(--font-mono) !important;
+  font-size: 13px !important;
+  font-weight: 400 !important;
+}
+
 .tabular {
   font-variant-numeric: tabular-nums;
 }

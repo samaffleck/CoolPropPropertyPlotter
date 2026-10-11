@@ -69,10 +69,6 @@ export function ProcessPanel() {
           </Button>
         }
       >
-        <p className="text-xs leading-relaxed text-ink-3">
-          Build a sequence of processes from a start state; each step starts where the previous one ends. Click the chart to start a process at
-          that state.
-        </p>
       </Section>
       {chains.map((c, i) => (
         <ChainEditor key={c.id} index={i} result={results.find((r) => r.chain.id === c.id)} chainId={c.id} />
@@ -148,7 +144,7 @@ function ChainEditor({ chainId, result, index }: { chainId: string; result?: Cha
             </div>
             <div className="rounded-lg border border-line p-3">
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-[11px] font-semibold text-ink-3">STEP {i + 1}</span>
+                <span className="text-xs font-medium text-ink-3">Step {i + 1}</span>
                 <div className="flex-1" />
                 <IconButton label="Remove step" onClick={() => removeStep(chain.id, st.id)}>
                   <Trash2 size={13} />

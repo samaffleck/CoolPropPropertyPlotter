@@ -20,6 +20,7 @@ export interface SceneLine {
 export interface SceneMarker {
   point: Float64Array; // one vertex, SI
   color: string;
+  id?: string;
   label?: string;
   shape?: "dot" | "diamond";
   size?: number;
@@ -87,11 +88,38 @@ export class Renderer {
     const dpr = window.devicePixelRatio || 1;
     this.width = width;
     this.height = height;
-    this.canvas.width = Math.round(width * dpr);
-    this.canvas.height = Math.round(height * dpr);
+    const pixelWidth = Math.round(width * dpr);
+    const pixelHeight = Math.round(height * dpr);
+    if (this.canvas.width !== pixelWidth) this.canvas.width = pixelWidth;
+    if (this.canvas.height !== pixelHeight) this.canvas.height = pixelHeight;
+    // The backing bitmap uses device pixels; the CSS box must stay in logical pixels.
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  snapToLine(pos: { px: number; py: number }, scene: Scene, view: View, radius = 10) {
+    const { x, y } = this.axes(view);
+    let best: { px: number; py: number; x: number; y: number; distance: number } | null = null;
+    for (const line of scene.lines) {
+      const n = curveLength(line.data);
+      for (let i = 1; i < n; i++) {
+        const x0 = curveValue(line.data, i - 1, view.x);
+        const y0 = curveValue(line.data, i - 1, view.y);
+        const x1 = curveValue(line.data, i, view.x);
+        const y1 = curveValue(line.data, i, view.y);
+        if (![x0, y0, x1, y1].every(Number.isFinite)) continue;
+        const px0 = x.toPx(x0), py0 = y.toPx(y0), px1 = x.toPx(x1), py1 = y.toPx(y1);
+        const dx = px1 - px0, dy = py1 - py0;
+        const t = Math.max(0, Math.min(1, ((pos.px - px0) * dx + (pos.py - py0) * dy) / (dx * dx + dy * dy || 1)));
+        const px = px0 + t * dx, py = py0 + t * dy;
+        const distance = Math.hypot(pos.px - px, pos.py - py);
+        if (distance <= radius && (!best || distance < best.distance)) {
+          best = { px, py, x: x.fromPx(px), y: y.fromPx(py), distance };
+        }
+      }
+    }
+    return best;
   }
 
   axes(view: View): { x: Axis; y: Axis } {

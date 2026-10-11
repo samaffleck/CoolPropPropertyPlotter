@@ -163,11 +163,11 @@ export function IconButton({ label, onClick, children, className = "" }: { label
   );
 }
 
-export function Section({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
+export function Section({ title, actions, children }: { title: string; actions?: ReactNode; children?: ReactNode }) {
   return (
     <section className="border-b border-line px-4 py-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{title}</h2>
+      <div className={`${children ? "mb-3" : ""} flex items-center justify-between`}>
+        <h2 className="text-sm font-medium text-ink-2">{title}</h2>
         {actions}
       </div>
       {children}

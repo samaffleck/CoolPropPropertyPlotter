@@ -45,17 +45,16 @@ interface AppState {
   setFluid: (fluid: string) => void;
   setChart: (id: ChartId) => void;
   setMode: (mode: Mode) => void;
-  setTheme: (t: ThemePref) => void;
   setUnitSystem: (id: string) => void;
   setUnit: (q: Quantity, unit: string) => void;
   toggleFamily: (chart: ChartId, family: Prop) => void;
   setDensity: (d: number) => void;
   setView: (chart: ChartId, vp: Viewport | undefined) => void;
-  addPoint: (input: StateInput, label?: string) => void;
+  addPoint: (input: StateInput, label?: string) => string;
   updatePoint: (id: string, patch: Partial<PinnedPoint>) => void;
   removePoint: (id: string) => void;
   clearPoints: () => void;
-  addChain: (start: StateInput) => void;
+  addChain: (start: StateInput, firstStep?: ProcessSpec) => string;
   updateChain: (id: string, patch: Partial<ProcessChain>) => void;
   removeChain: (id: string) => void;
   addStep: (chainId: string, spec: ProcessSpec) => void;
@@ -67,7 +66,7 @@ interface AppState {
 }
 
 const uid = () => Math.random().toString(36).slice(2, 9);
-const defaultFamilies = Object.fromEntries(CHARTS.map((c) => [c.id, c.families.slice(0, 3).concat(Prop.Q)])) as Record<
+const defaultFamilies = Object.fromEntries(CHARTS.map((c) => [c.id, c.families.includes(Prop.Q) ? [Prop.Q] : []])) as Record<
   ChartId,
   Prop[]
 >;
@@ -105,7 +104,6 @@ export const useStore = create<AppState>()(
       },
       setChart: (chartId) => set({ chartId }),
       setMode: (mode) => set({ mode }),
-      setTheme: (theme) => set({ theme }),
       setUnitSystem: (id) => {
         const sys = UNIT_SYSTEMS.find((s) => s.id === id);
         if (sys) set({ unitSystem: id, units: { ...sys.units } });
@@ -125,23 +123,29 @@ export const useStore = create<AppState>()(
           else delete views[chart];
           return { views };
         }),
-      addPoint: (input, label) =>
-        set((s) => ({ points: [...s.points, { id: uid(), label: label ?? nextLabel(s.points.map((p) => p.label)), input }] })),
+      addPoint: (input, label) => {
+        const id = uid();
+        set((s) => ({ points: [...s.points, { id, label: label ?? nextLabel(s.points.map((p) => p.label)), input }] }));
+        return id;
+      },
       updatePoint: (id, patch) => set((s) => ({ points: s.points.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
       removePoint: (id) => set((s) => ({ points: s.points.filter((p) => p.id !== id) })),
       clearPoints: () => set({ points: [] }),
-      addChain: (start) =>
+      addChain: (start, firstStep) => {
+        const id = uid();
         set((s) => ({
           chains: [
             ...s.chains,
             {
-              id: uid(),
-              name: `Process ${String.fromCharCode(65 + (s.chains.length % 26))}`,
+              id,
+              name: `Process ${s.chains.length + 1}`,
               start,
-              steps: [],
+              steps: firstStep ? [{ id: uid(), spec: firstStep }] : [],
             },
           ],
-        })),
+        }));
+        return id;
+      },
       updateChain: (id, patch) => set((s) => ({ chains: s.chains.map((c) => (c.id === id ? { ...c, ...patch } : c)) })),
       removeChain: (id) => set((s) => ({ chains: s.chains.filter((c) => c.id !== id) })),
       addStep: (chainId, spec) =>
@@ -172,12 +176,12 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "thermoplot",
-      version: 1,
+      version: 3,
+      migrate: (persisted) => ({ ...(persisted as AppState), theme: "system", families: defaultFamilies }),
       partialize: (s) => ({
         fluid: s.fluid,
         chartId: s.chartId,
         mode: s.mode,
-        theme: s.theme,
         unitSystem: s.unitSystem,
         units: s.units,
         families: s.families,

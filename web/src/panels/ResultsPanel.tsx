@@ -177,10 +177,6 @@ export function ResultsPanel() {
           )}
           {current === "Exergy" && (
             <div className="max-w-2xl">
-              <p className="mb-3 text-xs text-ink-3">
-                Exergy destroyed in each component (T₀·S<sub>gen</sub>), relative to the ambient/warm-end temperature. Reducing the largest bar gives
-                the biggest efficiency gain.
-              </p>
               <ExergyBars metrics={cycle.metrics} />
             </div>
           )}
@@ -222,7 +218,7 @@ function Shell({ title, onCsv, children }: { title: string; onCsv?: () => void; 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center border-b border-line px-4 py-1.5">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{title}</h2>
+        <h2 className="text-sm font-medium text-ink-2">{title}</h2>
         {onCsv && (
           <Button variant="ghost" className="ml-auto h-7 px-2 text-xs" onClick={onCsv}>
             <FileDown size={13} /> CSV

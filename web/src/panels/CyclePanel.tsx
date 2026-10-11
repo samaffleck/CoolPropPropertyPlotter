@@ -1,4 +1,5 @@
-import { RotateCcw } from "lucide-react";
+import { ChevronDown, RotateCcw } from "lucide-react";
+import { useState } from "react";
 import { Button, Field, Message, QuantityInput, Section, Select } from "../components/ui";
 import { cycleById, CYCLES } from "../cycles/catalog";
 import { useData } from "../state/data";
@@ -13,10 +14,9 @@ export function CyclePanel() {
   const params = useStore((s) => s.cycleParams);
   const setParam = useStore((s) => s.setCycleParam);
   const reset = useStore((s) => s.resetCycleParams);
-  const fluid = useStore((s) => s.fluid);
-  const setFluid = useStore((s) => s.setFluid);
   const { cycleError, cycle } = useData();
   const def = cycleById(cycleId) ?? CYCLES[0];
+  const [parametersOpen, setParametersOpen] = useState(false);
 
   return (
     <>
@@ -27,35 +27,18 @@ export function CyclePanel() {
           onChange={setCycle}
           options={CATEGORIES.flatMap((cat) => CYCLES.filter((c) => c.category === cat).map((c) => ({ value: c.id, label: `${cat} · ${c.name}` })))}
         />
-        <p className="mt-3 text-xs leading-relaxed text-ink-2">{def.description}</p>
-        <div className="mt-3">
-          <div className="mb-1.5 text-xs text-ink-3">Typical working fluids</div>
-          <div className="flex flex-wrap gap-1">
-            {def.fluids.map((f) => (
-              <button
-                key={f}
-                onClick={() => setFluid(f)}
-                className={`rounded-full border px-2 py-0.5 text-xs ${f === fluid ? "border-accent bg-accent/10 text-ink" : "border-line text-ink-2 hover:bg-surface-2"}`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-          {!def.fluids.includes(fluid) && (
-            <p className="mt-2 text-xs text-ink-3">{fluid} is not a typical fluid for this cycle; defaults may not converge.</p>
-          )}
-        </div>
       </Section>
 
       <Section
         title="Parameters"
-        actions={
-          <Button variant="ghost" onClick={reset} className="h-7 px-2 text-xs" title="Restore defaults for this fluid">
-            <RotateCcw size={13} /> Defaults
-          </Button>
-        }
+        actions={<div className="flex items-center gap-1">
+          {parametersOpen && <Button variant="ghost" onClick={reset} className="h-7 px-2 text-xs" title="Restore defaults for this fluid"><RotateCcw size={13} /> Defaults</Button>}
+          <button onClick={() => setParametersOpen((open) => !open)} aria-label={parametersOpen ? "Hide parameters" : "Show parameters"} aria-expanded={parametersOpen} className="rounded p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink">
+            <ChevronDown size={15} className={`transition-transform ${parametersOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>}
       >
-        <div className="flex flex-col gap-3">
+        {parametersOpen && <div className="flex flex-col gap-3">
           {def.params.map((p) =>
             p.toggle ? (
               <label key={p.key} className="flex items-center justify-between gap-3 text-xs text-ink-2">
@@ -82,7 +65,7 @@ export function CyclePanel() {
               </Field>
             ),
           )}
-        </div>
+        </div>}
       </Section>
 
       {(cycleError || (cycle && cycle.warnings.length > 0)) && (

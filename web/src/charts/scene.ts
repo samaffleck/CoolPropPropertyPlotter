@@ -83,9 +83,6 @@ export function buildScene(o: SceneInput): Scene {
     });
   }
   if (o.saturation) {
-    if (o.saturation.melting.length) {
-      lines.push({ data: o.saturation.melting, color: theme.textMuted, width: 1.25, dash: [2, 3], label: "melting line", labelAt: 0.7 });
-    }
     lines.push({ data: o.saturation.dome, color: theme.dome, width: 1.75 });
     const ci = o.saturation.criticalIndex;
     if (ci > 0) {
@@ -95,20 +92,19 @@ export function buildScene(o: SceneInput): Scene {
 
   if (o.showOverlays.points) {
     for (const p of o.points) {
-      if (p.state) markers.push({ point: statePoint(p.state), color: theme.accent, label: p.point.label });
+      if (p.state) markers.push({ point: statePoint(p.state), color: theme.accent, label: p.point.label, id: p.point.id });
     }
   }
 
   if (o.showOverlays.chains) {
     o.chains.forEach((c, ci) => {
       const color = theme.paths[ci % theme.paths.length];
-      const letter = c.chain.name.replace(/^Process\s+/, "");
       for (const st of c.steps) {
         if (st.result) lines.push({ data: st.result.path, color, width: 2.5, arrows: true, emphasis: true });
       }
-      if (c.start) markers.push({ point: statePoint(c.start), color, label: `${letter}0` });
-      c.steps.forEach((st, i) => {
-        if (st.result) markers.push({ point: statePoint(st.result.end), color, label: `${letter}${i + 1}` });
+      if (c.start) markers.push({ point: statePoint(c.start), color });
+      c.steps.forEach((st) => {
+        if (st.result) markers.push({ point: statePoint(st.result.end), color });
       });
     });
   }

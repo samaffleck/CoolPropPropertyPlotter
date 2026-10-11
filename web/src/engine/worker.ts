@@ -52,7 +52,7 @@ function defaultView(m: Module, fluid: string, axes: AxesSpec): Viewport {
   const info = m.fluidInfo(fluid);
   if (!info) throw new Error(`Unknown fluid ${fluid}`);
   const Tlo = Math.max(info.Ttriple || info.Tmin, info.Tmin);
-  const Thi = Math.min(info.Tmax, Math.max(1.6 * info.Tcrit, info.Tcrit + 60));
+  const Thi = Math.min(info.Tmax, 1.6 * info.Tcrit);
   const plo = Math.max(Number.isFinite(info.ptriple) ? info.ptriple : 0, info.pcrit / 500);
   const phi = Math.min(info.pmax, 5 * info.pcrit);
 
