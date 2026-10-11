@@ -87,8 +87,7 @@ export function useIsolines(fluid: string, view: Viewport | undefined, families:
       if (cached?.key === selectionKey) {
         return engine.chart(fluid, expanded, cached.groups).then((r) => (r.ok ? r : Promise.reject(new Error(r.error))));
       }
-      const expandedDensity = Math.round(density * (1 + 2 * ISOLINE_OVERSCAN));
-      return engine.chartAuto(fluid, expanded, families, units, expandedDensity).then((r) => {
+      return engine.chartAuto(fluid, view, families, units, density, expanded).then((r) => {
         if (!r.ok) return Promise.reject(new Error(r.error));
         const values = new Map<Prop, number[]>();
         for (const isoline of r.isolines) {
@@ -143,7 +142,6 @@ export interface StepResult {
   spec: ProcessSpec;
   result: ProcessResult | null;
   error?: string;
-  generatedEndpoint?: boolean;
 }
 
 export interface ChainResult {
@@ -153,71 +151,42 @@ export interface ChainResult {
   steps: StepResult[];
 }
 
-export const continueFrom = (s: ThermoState): StateInput => ({ a: Prop.P, va: s.p, b: Prop.H, vb: s.h });
-
 export function useChains(fluid: string, chains: ProcessChain[], points: PointResult[]) {
   return useAsync<ChainResult[]>(
     () =>
       Promise.all(
         chains.map(async (chain): Promise<ChainResult> => {
-          const hasLegacySteps = chain.steps.some((step) => !step.fromPointId || !step.toPointId);
-          const s0 = hasLegacySteps || chain.steps.length === 0 ? await engine.state(fluid, chain.start) : null;
-          if (s0 && !s0.ok) return { chain, start: null, error: s0.error, steps: [] };
           const steps: StepResult[] = [];
-          const computedPoints = new Map(points.map((point) => [point.point.id, point]));
-          let from: StateInput | null = s0?.ok ? continueFrom(s0.state) : null;
-          let broken = false;
+          const pointById = new Map(points.map((point) => [point.point.id, point]));
+          const firstFrom = chain.steps[0]?.fromPointId ? pointById.get(chain.steps[0].fromPointId) : undefined;
           for (const st of chain.steps) {
-            if (st.fromPointId && (st.generatedEndpoint || st.toPointId)) {
-              const fromPoint = computedPoints.get(st.fromPointId);
-              const toPoint = st.generatedEndpoint ? null : computedPoints.get(st.toPointId!);
-              if (!fromPoint?.state || (!st.generatedEndpoint && !toPoint?.state)) {
-                steps.push({ id: st.id, spec: st.spec, result: null, error: "Choose two available state points." });
-                continue;
-              }
-              const r = await engine.process(fluid, fromPoint.point.input, st.spec);
-              if (!r.ok) {
-                steps.push({ id: st.id, spec: st.spec, result: null, error: r.error, generatedEndpoint: st.generatedEndpoint });
-                continue;
-              }
-              if (!st.generatedEndpoint && toPoint?.state) {
-                const actual = r.end;
-                const expected = toPoint.state;
-                const matches = ([actualValue, expectedValue]: [number, number]) =>
-                  Number.isFinite(actualValue) && Number.isFinite(expectedValue)
-                  && Math.abs(actualValue - expectedValue) <= Math.max(1e-6, Math.abs(expectedValue) * 1e-4);
-                const reachesTarget = [
-                  [actual.T, expected.T], [actual.p, expected.p], [actual.rho, expected.rho],
-                  [actual.h, expected.h], [actual.s, expected.s],
-                ].every((values) => matches(values as [number, number]));
-                if (!reachesTarget) {
-                  steps.push({ id: st.id, spec: st.spec, result: null, error: "This process does not reach the selected end point." });
-                  continue;
-                }
-              }
-              steps.push({ id: st.id, spec: st.spec, result: r, generatedEndpoint: st.generatedEndpoint });
-              if (st.generatedEndpoint && st.toPointId) {
-                computedPoints.set(st.toPointId, {
-                  point: { id: st.toPointId, label: st.endpointLabel ?? `${fromPoint.point.label}′`, input: continueFrom(r.end), generated: true },
-                  state: r.end,
-                });
-              }
+            const fromPoint = st.fromPointId ? pointById.get(st.fromPointId) : undefined;
+            const toPoint = st.toPointId ? pointById.get(st.toPointId) : undefined;
+            if (!fromPoint?.state || !toPoint?.state || st.fromPointId === st.toPointId) {
+              steps.push({ id: st.id, spec: st.spec, result: null, error: "Choose two different available state points." });
               continue;
             }
-            if (broken || !from) {
-              steps.push({ id: st.id, spec: st.spec, result: null, error: "Previous step failed" });
-              continue;
-            }
-            const r = await engine.process(fluid, from, st.spec);
-            if (r.ok) {
-              steps.push({ id: st.id, spec: st.spec, result: r });
-              from = continueFrom(r.end);
-            } else {
+            const r = await engine.process(fluid, fromPoint.point.input, st.spec);
+            if (!r.ok) {
               steps.push({ id: st.id, spec: st.spec, result: null, error: r.error });
-              broken = true;
+              continue;
             }
+            const actual = r.end;
+            const expected = toPoint.state;
+            const matches = ([actualValue, expectedValue]: [number, number]) =>
+              Number.isFinite(actualValue) && Number.isFinite(expectedValue)
+              && Math.abs(actualValue - expectedValue) <= Math.max(1e-6, Math.abs(expectedValue) * 1e-4);
+            const reachesTarget = [
+              [actual.T, expected.T], [actual.p, expected.p], [actual.rho, expected.rho],
+              [actual.h, expected.h], [actual.s, expected.s],
+            ].every((values) => matches(values as [number, number]));
+            if (!reachesTarget) {
+              steps.push({ id: st.id, spec: st.spec, result: null, error: "The selected end point does not match this process." });
+              continue;
+            }
+            steps.push({ id: st.id, spec: st.spec, result: r });
           }
-          return { chain, start: s0?.ok ? s0.state : null, steps };
+          return { chain, start: firstFrom?.state ?? null, steps };
         }),
       ),
     [fluid, JSON.stringify(chains), JSON.stringify(points)],

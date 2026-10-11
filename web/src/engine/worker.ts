@@ -94,7 +94,7 @@ function defaultView(m: Module, fluid: string, axes: AxesSpec): Viewport {
 }
 
 /** Probe the viewport to find each family's value range, pick round values, and compute curves. */
-function chartAuto(m: Module, fluid: string, vp: Viewport, families: Prop[], units: Parameters<typeof pickIsolineValues>[3], density: number) {
+function chartAuto(m: Module, fluid: string, vp: Viewport, curveVp: Viewport, families: Prop[], units: Parameters<typeof pickIsolineValues>[3], density: number) {
   const ranges = new Map<Prop, [number, number]>(families.map((f) => [f, [Infinity, -Infinity]]));
   const N = 10;
   for (let i = 0; i <= N; i++) {
@@ -112,7 +112,7 @@ function chartAuto(m: Module, fluid: string, vp: Viewport, families: Prop[], uni
     const [lo, hi] = ranges.get(f)!;
     return { prop: f, values: pickIsolineValues(f, lo, hi, units, density) };
   });
-  return m.chart(fluid, vp, groups);
+  return m.chart(fluid, curveVp, groups);
 }
 
 async function handle(m: Module, req: Request): Promise<unknown> {
@@ -127,7 +127,7 @@ async function handle(m: Module, req: Request): Promise<unknown> {
     case "chart":
       return m.chart(req.fluid, req.viewport, req.isolines);
     case "chartAuto":
-      return chartAuto(m, req.fluid, req.viewport, req.families, req.units, req.density);
+      return chartAuto(m, req.fluid, req.viewport, req.curveViewport ?? req.viewport, req.families, req.units, req.density);
     case "defaultView":
       return defaultView(m, req.fluid, req.axes);
     case "process":

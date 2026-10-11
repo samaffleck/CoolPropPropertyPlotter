@@ -1,6 +1,8 @@
 import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { Button, IconButton, Message, QuantityInput, Select } from "../components/ui";
 import { ProcessKind, Prop, type ProcessSpec, type ThermoState } from "../engine/types";
+import { engine } from "../engine/client";
 import type { ChainResult, PointResult } from "../state/compute";
 import { useData } from "../state/data";
 import { useStore } from "../state/store";
@@ -19,16 +21,12 @@ export const PROCESS_KINDS: { kind: ProcessKind; label: string; hint: string; ta
 
 const kindInfo = (k: ProcessKind) => PROCESS_KINDS.find((p) => p.kind === k)!;
 
-/** Pick a nearby target value so a new connection immediately has a valid endpoint. */
-function specForNewEndpoint(kind: ProcessKind, from: ThermoState | null): ProcessSpec {
+/** Keep the selected destination value for the endpoint property, then fit the rest to the process. */
+function specForConnection(kind: ProcessKind, to: ThermoState | null): ProcessSpec {
   const eff = kind === ProcessKind.Compression ? 0.8 : kind === ProcessKind.Expansion ? 0.85 : undefined;
   const targets = kindInfo(kind).targets;
   const target = targets.includes(Prop.T) ? Prop.T : targets[0];
-  const current = from ? stateValue(from, target) : target === Prop.P ? 1e6 : 300;
-  const direction = kind === ProcessKind.Expansion ? -1 : 1;
-  const value = target === Prop.Q
-    ? Math.min(1, current + 0.1)
-    : current + direction * Math.max(Math.abs(current) * 0.05, target === Prop.T ? 5 : 1);
+  const value = to ? stateValue(to, target) : target === Prop.P ? 1e6 : 300;
   return { kind, target, value, efficiency: eff };
 }
 
@@ -37,14 +35,15 @@ export function ProcessPanel() {
   const addChain = useStore((s) => s.addChain);
   const { chains: results, points } = useData();
   const availablePoints = points.filter((point): point is PointResult & { state: ThermoState } => !!point.state);
-  const firstPoint = availablePoints[0];
+  const canConnect = availablePoints.length >= 2;
 
   const newChain = () => {
-    if (!firstPoint) return;
+    if (!canConnect) return;
+    const [from, to] = availablePoints;
     addChain(
-      firstPoint.point.input,
-      specForNewEndpoint(ProcessKind.Isobaric, firstPoint.state),
-      { fromPointId: firstPoint.point.id, generatedEndpoint: true },
+      from.point.input,
+      specForConnection(ProcessKind.Isobaric, to.state),
+      { fromPointId: from.point.id, toPointId: to.point.id },
     );
   };
 
@@ -56,12 +55,12 @@ export function ProcessPanel() {
         <div className="grid grid-cols-[1fr_auto] items-center gap-2">
           <h2 className="text-sm font-medium text-ink-2">Connections</h2>
           {!chain && (
-            <Button onClick={newChain} disabled={!firstPoint} variant="ghost" className="h-8 w-auto px-2">
+            <Button onClick={newChain} disabled={!canConnect} variant="ghost" className="h-8 w-auto px-2">
               <Plus size={14} /> Add connection
             </Button>
           )}
         </div>
-        {!firstPoint && <p className="mt-2 text-xs text-ink-3">Add a state point on the plot to start a connection.</p>}
+        {!canConnect && <p className="mt-2 text-xs text-ink-3">Add two state points on the plot to connect them.</p>}
       </section>
       {chain && <ChainEditor result={results.find((r) => r.chain.id === chain.id)} chainId={chain.id} points={availablePoints} />}
     </>
@@ -70,13 +69,53 @@ export function ProcessPanel() {
 
 function ChainEditor({ chainId, result, points }: { chainId: string; result?: ChainResult; points: (PointResult & { state: ThermoState })[] }) {
   const chain = useStore((s) => s.chains.find((c) => c.id === chainId))!;
+  const fluid = useStore((s) => s.fluid);
+  const updatePoint = useStore((s) => s.updatePoint);
   const addStep = useStore((s) => s.addStep);
   const updateStep = useStore((s) => s.updateStep);
   const removeStep = useStore((s) => s.removeStep);
+  const fitRequests = useRef(new Map<string, string>());
+
+  const fitConnection = async (stepId: string, fromId: string, toId: string, spec: ProcessSpec) => {
+    const from = points.find((point) => point.point.id === fromId);
+    const to = points.find((point) => point.point.id === toId);
+    if (!from?.state || !to?.state || fromId === toId) return;
+    const fittedSpec = { ...spec, value: stateValue(to.state, spec.target) };
+    const requestKey = JSON.stringify([from.point.input, to.point.input, fittedSpec]);
+    if (fitRequests.current.get(stepId) === requestKey) return;
+    fitRequests.current.set(stepId, requestKey);
+    const currentChain = useStore.getState().chains.find((candidate) => candidate.id === chainId);
+    const currentStep = currentChain?.steps.find((step) => step.id === stepId);
+    if (!currentStep || currentStep.fromPointId !== fromId || currentStep.toPointId !== toId) return;
+    updateStep(chainId, stepId, { spec: fittedSpec });
+    try {
+      const calculated = await engine.process(fluid, from.point.input, fittedSpec);
+      const latestChain = useStore.getState().chains.find((candidate) => candidate.id === chainId);
+      const latestStep = latestChain?.steps.find((step) => step.id === stepId);
+      if (!calculated.ok || fitRequests.current.get(stepId) !== requestKey
+        || latestStep?.fromPointId !== fromId || latestStep.toPointId !== toId
+        || JSON.stringify(latestStep.spec) !== JSON.stringify(fittedSpec)) return;
+      updatePoint(toId, { input: { a: Prop.P, va: calculated.end.p, b: Prop.H, vb: calculated.end.h } });
+    } catch {
+      // The connection result below will surface the calculation error.
+    }
+  };
+
+  // Imported and migrated examples, plus connections affected by moving a point, are fitted too.
+  useEffect(() => {
+    const resultById = new Map((result?.steps ?? []).map((step) => [step.id, step] as const));
+    for (const step of chain.steps) {
+      if (resultById.get(step.id)?.error !== "The selected end point does not match this process.") continue;
+      if (step.fromPointId && step.toPointId) void fitConnection(step.id, step.fromPointId, step.toPointId, step.spec);
+    }
+    const activeIds = new Set(chain.steps.map((step) => step.id));
+    for (const id of fitRequests.current.keys()) if (!activeIds.has(id)) fitRequests.current.delete(id);
+  }, [chain.steps, points, result]);
+
   const addConnection = () => {
-    if (points.length < 1) return;
-    const from = points[0];
-    addStep(chain.id, specForNewEndpoint(ProcessKind.Isobaric, from.state), { fromPointId: from.point.id, generatedEndpoint: true });
+    if (points.length < 2) return;
+    const [from, to] = points;
+    addStep(chain.id, specForConnection(ProcessKind.Isobaric, to.state), { fromPointId: from.point.id, toPointId: to.point.id });
   };
 
   return (
@@ -85,12 +124,12 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
       {chain.steps.map((st, i) => {
         const r = result?.steps.find((x) => x.id === st.id);
         const fromId = st.fromPointId ?? "";
-        const from = points.find((point) => point.point.id === fromId);
-        const to = points.find((point) => point.point.id === st.toPointId);
+        const toId = st.toPointId ?? "";
+        const to = points.find((point) => point.point.id === toId);
         const targetOptions = kindInfo(st.spec.kind).targets.map((prop) => ({ value: prop, label: `${COORDINATES[prop].label} (${COORDINATES[prop].symbol})` }));
         const updateKind = (kind: ProcessKind) => {
-          const nextSpec = specForNewEndpoint(kind, from?.state ?? null);
-          updateStep(chain.id, st.id, { spec: nextSpec, generatedEndpoint: true });
+          const nextSpec = specForConnection(kind, to?.state ?? null);
+          updateStep(chain.id, st.id, { spec: nextSpec });
         };
         return (
           <div key={st.id} className="mb-3 rounded-lg border border-line p-2.5 last:mb-0">
@@ -100,17 +139,25 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
                 <Trash2 size={13} />
               </IconButton>
             </div>
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+            <div className="grid grid-cols-2 items-end gap-2">
               <Select
                 label="From point"
                 value={fromId}
                 options={[
                   { value: "", label: "Select point…" },
-                  ...points.map(({ point }) => ({ value: point.id, label: `Point ${point.label}` })),
+                  ...points.filter(({ point }) => point.id !== toId).map(({ point }) => ({ value: point.id, label: `Point ${point.label}` })),
                 ]}
-                onChange={(nextFromId) => updateStep(chain.id, st.id, { fromPointId: nextFromId || undefined, generatedEndpoint: true })}
+                onChange={(nextFromId) => updateStep(chain.id, st.id, { fromPointId: nextFromId || undefined })}
               />
-              <span className="pb-2 text-xs text-ink-3">→ Point {to?.point.label ?? "…"}</span>
+              <Select
+                label="To point"
+                value={toId}
+                options={[
+                  { value: "", label: "Select point…" },
+                  ...points.filter(({ point }) => point.id !== fromId).map(({ point }) => ({ value: point.id, label: `Point ${point.label}` })),
+                ]}
+                onChange={(nextToId) => updateStep(chain.id, st.id, { toPointId: nextToId || undefined })}
+              />
             </div>
             <div className="mt-2 grid grid-cols-1 items-end gap-2">
               <Select
@@ -124,22 +171,11 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
                 value={st.spec.target}
                 options={targetOptions}
                 onChange={(target) => {
-                  const current = from?.state ? stateValue(from.state, target) : 300;
-                  const direction = st.spec.kind === ProcessKind.Expansion ? -1 : 1;
-                  const value = target === Prop.Q
-                    ? Math.min(1, current + 0.1)
-                    : current + direction * Math.max(Math.abs(current) * 0.05, target === Prop.T ? 5 : 1);
+                  const value = to?.state ? stateValue(to.state, target) : st.spec.value;
                   updateStep(chain.id, st.id, { spec: { ...st.spec, target, value } });
                 }}
               />
-              <QuantityInput
-                label={`${COORDINATES[st.spec.target].label} value`}
-                quantity={COORDINATES[st.spec.target].quantity}
-                value={st.spec.value}
-                min={st.spec.target === Prop.Q ? 0 : undefined}
-                max={st.spec.target === Prop.Q ? 1 : undefined}
-                onChange={(value) => updateStep(chain.id, st.id, { spec: { ...st.spec, value } })}
-              />
+              <p className="text-[11px] text-ink-3">Point {to?.point.label ?? "2"} will move to match the process.</p>
               {st.spec.efficiency !== undefined && (
                 <QuantityInput
                   label="Efficiency"
@@ -149,7 +185,6 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
                   max={1}
                   onChange={(efficiency) => updateStep(chain.id, st.id, {
                     spec: { ...st.spec, efficiency },
-                    generatedEndpoint: true,
                   })}
                 />
               )}
@@ -163,7 +198,7 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
         variant="ghost"
         className="mt-2 w-full"
         onClick={addConnection}
-        disabled={points.length < 1}
+        disabled={points.length < 2}
       >
         <Plus size={14} /> Add connection
       </Button>

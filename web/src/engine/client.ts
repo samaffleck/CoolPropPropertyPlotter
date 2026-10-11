@@ -42,8 +42,8 @@ export const engine = {
   saturation: (fluid: string) => call<Saturation>({ op: "saturation", fluid }),
   chart: (fluid: string, viewport: Viewport, isolines: { prop: Prop; values: number[] }[]) =>
     call<Result<ChartResult>>({ op: "chart", fluid, viewport, isolines }),
-  chartAuto: (fluid: string, viewport: Viewport, families: Prop[], units: UnitChoice, density = 10) =>
-    call<Result<ChartResult>>({ op: "chartAuto", fluid, viewport, families, units, density }),
+  chartAuto: (fluid: string, viewport: Viewport, families: Prop[], units: UnitChoice, density = 10, curveViewport?: Viewport) =>
+    call<Result<ChartResult>>({ op: "chartAuto", fluid, viewport, curveViewport, families, units, density }),
   defaultView: (fluid: string, axes: AxesSpec) => call<Viewport>({ op: "defaultView", fluid, axes }),
   process: (fluid: string, start: StateInput, spec: ProcessSpec) =>
     call<Result<ProcessResult>>({ op: "process", fluid, start, spec }),

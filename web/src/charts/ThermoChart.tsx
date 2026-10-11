@@ -1,4 +1,4 @@
-import { Download, Maximize2, Trash2, X } from "lucide-react";
+import { Download, Eraser, Maximize2, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { engine } from "../engine/client";
 import { curveValue, statePoint } from "../engine/curve";
@@ -96,10 +96,13 @@ export function ThermoChart() {
       if (!selectedPointId || !data.points.some(({ point }) => point.id === selectedPointId)) return;
       event.preventDefault();
       removePoint(selectedPointId);
+      pendingPointsRef.current.delete(selectedPointId);
+      if (draggedMarkerRef.current?.id === selectedPointId) draggedMarkerRef.current = null;
+      schedule();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [data.points, removePoint, selectedPointId]);
+  }, [data.points, removePoint, schedule, selectedPointId]);
   useEffect(() => {
     if (!selectedPoint?.state) return;
     const card = selectedPointCardRef.current;
@@ -219,13 +222,23 @@ export function ThermoChart() {
   }, [data.points, schedule]);
   useEffect(() => {
     let changed = false;
+    const dataPointIds = new Set(data.points.map(({ point }) => point.id));
+    const storedPointIds = new Set(statePoints.map((point) => point.id));
     for (const { point } of data.points) {
       changed = pendingPointsRef.current.delete(point.id) || changed;
+    }
+    for (const id of pendingPointsRef.current.keys()) {
+      if (!storedPointIds.has(id)) changed = pendingPointsRef.current.delete(id) || changed;
+    }
+    const preview = draggedMarkerRef.current;
+    if (preview && !dataPointIds.has(preview.id) && !storedPointIds.has(preview.id)) {
+      draggedMarkerRef.current = null;
+      changed = true;
     }
     if (changed) {
       schedule();
     }
-  }, [data.points, schedule]);
+  }, [data.points, schedule, statePoints]);
 
   // Canvas sizing.
   useEffect(() => {
@@ -407,9 +420,9 @@ export function ThermoChart() {
       const { x, y } = r.axes(vp);
       const snapped = r.snapToLine(pos, scene, vp);
       const line = snapped?.label && snapped.labelColor ? { label: snapped.label, color: snapped.labelColor } : undefined;
-      const xValue = x.fromPx(pos.px);
-      const yValue = y.fromPx(pos.py);
-      hoverRef.current = line ? null : snapped ? { px: snapped.px, py: snapped.py } : pos;
+      const xValue = snapped?.x ?? x.fromPx(pos.px);
+      const yValue = snapped?.y ?? y.fromPx(pos.py);
+      hoverRef.current = snapped ? { px: snapped.px, py: snapped.py } : pos;
       setReadout({
         x: xValue,
         y: yValue,
@@ -487,10 +500,12 @@ export function ThermoChart() {
       for (const id of recentClickActions) {
         removePoint(id);
         pendingPointsRef.current.delete(id);
+        if (draggedMarkerRef.current?.id === id) draggedMarkerRef.current = null;
       }
       recentClickActions = [];
       setSelectedPointId(null);
       setView(chartId, undefined);
+      schedule();
     };
 
     canvas.addEventListener("wheel", onWheel, { passive: false });
@@ -632,7 +647,7 @@ export function ThermoChart() {
             disabled={statePoints.length === 0}
             className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
           >
-            <Trash2 size={16} />
+            <Eraser size={16} />
           </button>
           <button
             onClick={fit}
@@ -661,7 +676,11 @@ export function ThermoChart() {
           aria-label={`${chart.title} chart for ${fluid}`}
           role="img"
         />
-        {selectedPointForCard ? (
+        {hoveredPoint?.state ? (
+          <Readout x={0} y={0} chart={chart} point={hoveredPoint} />
+        ) : readout?.line ? (
+          <Readout {...readout} chart={chart} />
+        ) : selectedPointForCard ? (
           <SelectedPointCard
             cardRef={selectedPointCardRef}
             point={selectedPointForCard}
@@ -669,8 +688,6 @@ export function ThermoChart() {
             fluid={fluid}
             onClose={() => setSelectedPointId(null)}
           />
-        ) : hoveredPoint?.state ? (
-          <Readout x={0} y={0} chart={chart} point={hoveredPoint} />
         ) : readout ? <Readout {...readout} chart={chart} /> : null}
       </div>
     </div>
@@ -731,7 +748,7 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
           return (
             <ValueRow key={label} label={label} unit={unit.label}>
               {displayValue === null ? <span className="w-[9ch] text-right font-mono text-ink-3">—</span> : (
-                <InlineEditableValue label={label} value={displayValue} disabled={saving || !!point.point.generated || prop === Prop.Q && !available} onCommit={(next) => commitValue(prop, next)} />
+                <InlineEditableValue label={label} value={displayValue} disabled={saving || prop === Prop.Q && !available} onCommit={(next) => commitValue(prop, next)} />
               )}
             </ValueRow>
           );
@@ -767,19 +784,17 @@ const ValueBox = forwardRef<HTMLElement, ValueBoxProps>(function ValueBox({
           {onClose && <button onClick={onClose} title="Close state details" aria-label="Close state details" className="rounded p-1 text-ink-3 hover:bg-surface-2 hover:text-ink"><X size={14} /></button>}
         </div>
       )}
-      {children != null && <div className="mt-2 flex flex-col divide-y divide-line">{children}</div>}
+      {children != null && <div className="mt-2 flex flex-col">{children}</div>}
     </section>
   );
 });
 
 function ValueRow({ label, unit, children }: { label: string; unit: string; children: ReactNode }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(9ch,1fr)_max-content] items-baseline gap-1 py-1.5 first:pt-0 last:pb-0">
       <div className="min-w-0 truncate text-xs text-ink-3">{label}</div>
-      <div className="flex items-baseline gap-1 tabular text-ink">
-        {children}
-        {unit && <span className="whitespace-nowrap text-ink-3">{unit}</span>}
-      </div>
+      <div className="flex min-w-0 w-full justify-end tabular text-right text-ink">{children}</div>
+      <div className="whitespace-nowrap text-left text-ink-3">{unit}</div>
     </div>
   );
 }
@@ -839,7 +854,7 @@ function InlineEditableValue({ label, value, disabled, onCommit }: {
           setDraft(formatNumber(value, 4));
           setEditing(true);
         }}
-        className="w-full cursor-text rounded-sm border-b border-dotted border-ink-3/60 bg-transparent px-0.5 text-right font-mono text-ink underline-offset-2 hover:border-accent hover:bg-accent/5 hover:text-accent disabled:cursor-wait"
+        className="w-full cursor-text rounded-sm bg-transparent px-0.5 text-right font-mono text-ink hover:bg-accent/5 hover:text-accent disabled:cursor-wait"
         aria-label={`Edit ${label}`}
       >
         {formatNumber(value, 4)}

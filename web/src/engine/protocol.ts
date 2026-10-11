@@ -16,7 +16,7 @@ export type Request = Base &
     | { op: "state"; input: StateInput }
     | { op: "saturation" }
     | { op: "chart"; viewport: Viewport; isolines: { prop: Prop; values: number[] }[] }
-    | { op: "chartAuto"; viewport: Viewport; families: Prop[]; units: UnitChoice; density: number }
+    | { op: "chartAuto"; viewport: Viewport; curveViewport?: Viewport; families: Prop[]; units: UnitChoice; density: number }
     | { op: "defaultView"; axes: AxesSpec }
     | { op: "process"; start: StateInput; spec: ProcessSpec }
     | { op: "cycle"; cycle: string; params: Record<string, number> }
