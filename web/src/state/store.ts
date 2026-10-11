@@ -182,12 +182,12 @@ export const useStore = create<AppState>()(
           })),
         };
       }),
-      clearPoints: () => set((s) => ({
+      clearPoints: () => set({
         points: [],
         selectedPointId: null,
         exampleSnapshot: null,
         chains: [],
-      })),
+      }),
       loadExampleSnapshot: (cycleId, name, states, connectionInputs) => set((s) => {
         const previousIds = new Set(Object.values(s.exampleSnapshot?.pointIds ?? {}));
         const points = s.points.filter((point) => !previousIds.has(point.id));
@@ -285,9 +285,10 @@ export const useStore = create<AppState>()(
       name: "thermoplot",
       version: 10,
       migrate: (persisted) => {
-        type LegacyStep = ProcessStep & { generatedEndpoint?: boolean; endpointLabel?: string };
+        type LegacyStep = Omit<ProcessStep, "generatedEndpoint" | "endpointLabel"> & { generatedEndpoint?: boolean; endpointLabel?: string };
         type LegacyChain = Omit<ProcessChain, "steps"> & { steps: LegacyStep[] };
-        const old = { ...(persisted as AppState & { cycleParams?: Record<string, number>; chains?: LegacyChain[] }) };
+        type LegacyState = Omit<AppState, "chains"> & { cycleParams?: Record<string, number>; chains?: LegacyChain[] };
+        const old = { ...(persisted as LegacyState) };
         delete old.cycleParams;
         const families = Object.fromEntries(CHARTS.map((chart) => [
           chart.id,

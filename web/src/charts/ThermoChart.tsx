@@ -82,6 +82,9 @@ export function ThermoChart() {
   const selectedPointRecord = statePoints.find((point) => point.id === selectedPointId);
   const selectedPointForCard = selectedPoint ?? (selectedPointRecord ? { point: selectedPointRecord, state: null } : undefined);
   const hoveredPoint = data.points.find(({ point }) => point.id === hoveredPointId);
+  const schedule = useCallback(() => {
+    if (!frame.current) frame.current = requestAnimationFrame(() => drawRef.current());
+  }, []);
 
   useEffect(() => {
     if (selectedPointId && !data.points.some(({ point }) => point.id === selectedPointId) && !statePoints.some((point) => point.id === selectedPointId)) {
@@ -197,10 +200,6 @@ export function ThermoChart() {
     });
   }, [scene, xUnit, yUnit, chart, theme]);
   drawRef.current = draw;
-
-  const schedule = useCallback(() => {
-    if (!frame.current) frame.current = requestAnimationFrame(() => drawRef.current());
-  }, []);
 
   useEffect(() => {
     viewRef.current = storedView;
