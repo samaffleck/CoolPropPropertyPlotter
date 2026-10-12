@@ -95,6 +95,14 @@ export function buildScene(o: SceneInput): Scene {
         const endpoints: [string, string] | undefined = connection?.fromPointId && connection.toPointId
           ? [connection.fromPointId, connection.toPointId]
           : undefined;
+        if (endpoints) {
+          const pointById = new Map(o.points.map((point) => [point.point.id, point]));
+          const from = pointById.get(endpoints[0])?.state;
+          const to = pointById.get(endpoints[1])?.state;
+          // Chain calculations keep their previous result while a point is recomputed.
+          // Don't draw that stale path against newly edited endpoint markers.
+          if (!from || !to || !sameState(st.result.start, from) || !sameState(st.result.end, to)) continue;
+        }
         lines.push({ data: st.result.path, color, width: 2.5, arrows: true, emphasis: true, connectedPointIds: endpoints });
         if (!endpoints) {
           markers.push({ point: statePoint(st.result.start), color });
@@ -121,4 +129,13 @@ export function buildScene(o: SceneInput): Scene {
     for (const s of o.cycle.states) markers.push({ point: statePoint(s.state), color, label: s.id });
   }
   return { lines, markers };
+}
+
+function sameState(a: PointResult["state"], b: PointResult["state"]): boolean {
+  if (!a || !b) return false;
+  const matches = (actual: number, expected: number) =>
+    Number.isFinite(actual) && Number.isFinite(expected)
+    && Math.abs(actual - expected) <= Math.max(1e-6, Math.abs(expected) * 1e-4);
+  return matches(a.T, b.T) && matches(a.p, b.p) && matches(a.rho, b.rho)
+    && matches(a.h, b.h) && matches(a.s, b.s);
 }

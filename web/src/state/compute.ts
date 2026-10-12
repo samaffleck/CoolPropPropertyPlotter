@@ -163,8 +163,16 @@ export function useChains(fluid: string, chains: ProcessChain[], points: PointRe
           for (const st of chain.steps) {
             const fromPoint = st.fromPointId ? pointById.get(st.fromPointId) : undefined;
             const toPoint = st.toPointId ? pointById.get(st.toPointId) : undefined;
-            if (!fromPoint?.state || !toPoint?.state || st.fromPointId === st.toPointId) {
-              steps.push({ id: st.id, spec: st.spec, result: null, error: "Choose two different available state points." });
+            if (st.fromPointId === st.toPointId) {
+              steps.push({ id: st.id, spec: st.spec, result: null, error: "Choose two different state points." });
+              continue;
+            }
+            if (!fromPoint || !toPoint) {
+              steps.push({ id: st.id, spec: st.spec, result: null, error: "The connection references a state point that no longer exists." });
+              continue;
+            }
+            if (!fromPoint.state || !toPoint.state) {
+              steps.push({ id: st.id, spec: st.spec, result: null, error: "One of the selected state points could not be calculated." });
               continue;
             }
             const held = sharedPropertyForProcess(st.spec.kind);

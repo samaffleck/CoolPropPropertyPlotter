@@ -60,9 +60,9 @@ export function ProcessPanel() {
 
 function ChainEditor({ chainId, result, points }: { chainId: string; result?: ChainResult; points: (PointResult & { state: ThermoState })[] }) {
   const chain = useStore((s) => s.chains.find((candidate) => candidate.id === chainId))!;
-  const updatePoint = useStore((s) => s.updatePoint);
   const addStep = useStore((s) => s.addStep);
   const updateStep = useStore((s) => s.updateStep);
+  const updateConnection = useStore((s) => s.updateConnection);
   const removeStep = useStore((s) => s.removeStep);
 
   useEffect(() => {
@@ -77,31 +77,13 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
       // using a result for inputs that have already changed in the store.
       if (JSON.stringify(currentInputs.get(from.point.id)) !== JSON.stringify(from.point.input)
         || JSON.stringify(currentInputs.get(to.point.id)) !== JSON.stringify(to.point.input)) continue;
-
-      const held = sharedPropertyForProcess(step.spec.kind);
-      let fromInput = from.point.input;
-      let toInput = to.point.input;
-      if (held !== null) {
-        if (inputValue(fromInput, held) === undefined) {
-          const replaceProp = replacementProperty(fromInput, held, chain.steps, step.id, from.point.id);
-          if (replaceProp === undefined) continue;
-          fromInput = replaceInputProperty(fromInput, replaceProp, held, stateValue(from.state, held));
-        }
-        if (inputValue(toInput, held) === undefined) {
-          const replaceProp = replacementProperty(toInput, held, chain.steps, step.id, to.point.id);
-          if (replaceProp === undefined) continue;
-          toInput = replaceInputProperty(toInput, replaceProp, held, stateValue(from.state, held));
-        }
-        toInput = setInputValue(toInput, held, stateValue(from.state, held));
-      }
-
-      if (JSON.stringify(fromInput) !== JSON.stringify(from.point.input)) updatePoint(from.point.id, { input: fromInput });
-      if (JSON.stringify(toInput) !== JSON.stringify(to.point.input)) updatePoint(to.point.id, { input: toInput });
-
-      const spec = processSpecForEndpoints(step.spec.kind, toInput);
+      const fitted = processSpecForEndpoints(step.spec.kind, to.point.input);
+      const spec = step.spec.efficiency !== undefined && fitted.efficiency !== undefined
+        ? { ...fitted, efficiency: step.spec.efficiency }
+        : fitted;
       if (JSON.stringify(spec) !== JSON.stringify(step.spec)) updateStep(chainId, step.id, { spec });
     }
-  }, [chain.steps, chainId, points, updatePoint, updateStep]);
+  }, [chain.steps, chainId, points, updateStep]);
 
   const addConnection = () => {
     if (points.length < 2) return;
@@ -123,14 +105,54 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
         const toId = step.toPointId ?? "";
         const to = points.find((point) => point.point.id === toId);
         const updateKind = (kind: ProcessKind) => {
+          const from = points.find((point) => point.point.id === fromId);
+          if (from && to && fromId !== toId) {
+            const endpointInputs = inputsForProcessKind(kind, from, to, chain.steps, step.id);
+            if (endpointInputs) {
+              updateConnection(
+                chain.id,
+                step.id,
+                processSpecForEndpoints(kind, endpointInputs.to),
+                [
+                  { id: from.point.id, input: endpointInputs.from },
+                  { id: to.point.id, input: endpointInputs.to },
+                ],
+              );
+              return;
+            }
+          }
           updateStep(chain.id, step.id, {
             spec: processSpecForEndpoints(kind, to?.point.input ?? { a: Prop.P, va: 1e5, b: Prop.H, vb: 3e5 }),
           });
         };
         const updateEndpoint = (side: "from" | "to", id: string) => {
-          updateStep(chain.id, step.id, side === "from"
-            ? { fromPointId: id || undefined }
-            : { toPointId: id || undefined });
+          const endpoints = {
+            fromPointId: side === "from" ? id || undefined : step.fromPointId,
+            toPointId: side === "to" ? id || undefined : step.toPointId,
+          };
+          const from = points.find((point) => point.point.id === endpoints.fromPointId);
+          const to = points.find((point) => point.point.id === endpoints.toPointId);
+          if (from && to && endpoints.fromPointId !== endpoints.toPointId) {
+            const endpointInputs = inputsForProcessKind(step.spec.kind, from, to, chain.steps, step.id);
+            if (endpointInputs) {
+              const spec = processSpecForEndpoints(step.spec.kind, endpointInputs.to);
+              const fittedSpec = step.spec.efficiency !== undefined && spec.efficiency !== undefined
+                ? { ...spec, efficiency: step.spec.efficiency }
+                : spec;
+              updateConnection(
+                chain.id,
+                step.id,
+                fittedSpec,
+                [
+                  { id: from.point.id, input: endpointInputs.from },
+                  { id: to.point.id, input: endpointInputs.to },
+                ],
+                endpoints,
+              );
+              return;
+            }
+          }
+          updateStep(chain.id, step.id, endpoints);
         };
 
         return (
@@ -223,4 +245,30 @@ function replacementProperty(
   return REPLACEMENT_PRIORITY.find((property) =>
     property !== held && !lockedElsewhere.has(property) && inputValue(input, property) !== undefined,
   );
+}
+
+function inputsForProcessKind(
+  kind: ProcessKind,
+  from: PointResult & { state: ThermoState },
+  to: PointResult & { state: ThermoState },
+  steps: ProcessChain["steps"],
+  stepId: string,
+): { from: PointResult["point"]["input"]; to: PointResult["point"]["input"] } | undefined {
+  const held = sharedPropertyForProcess(kind);
+  let fromInput = from.point.input;
+  let toInput = to.point.input;
+  if (held !== null) {
+    if (inputValue(fromInput, held) === undefined) {
+      const replaceProp = replacementProperty(fromInput, held, steps, stepId, from.point.id);
+      if (replaceProp === undefined) return undefined;
+      fromInput = replaceInputProperty(fromInput, replaceProp, held, stateValue(from.state, held));
+    }
+    if (inputValue(toInput, held) === undefined) {
+      const replaceProp = replacementProperty(toInput, held, steps, stepId, to.point.id);
+      if (replaceProp === undefined) return undefined;
+      toInput = replaceInputProperty(toInput, replaceProp, held, stateValue(from.state, held));
+    }
+    toInput = setInputValue(toInput, held, stateValue(from.state, held));
+  }
+  return { from: fromInput, to: toInput };
 }

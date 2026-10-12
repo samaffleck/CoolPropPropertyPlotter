@@ -97,6 +97,7 @@ interface AppState {
   removeExampleConnection: (id: string) => void;
   addChain: (start: StateInput, firstStep?: ProcessSpec, endpoints?: ProcessEndpoints) => void;
   updateChain: (id: string, patch: Partial<ProcessChain>) => void;
+  updateConnection: (chainId: string, stepId: string, spec: ProcessSpec, pointInputs: { id: string; input: StateInput }[], endpoints?: ProcessEndpoints) => void;
   removeChain: (id: string) => void;
   addStep: (chainId: string, spec: ProcessSpec, endpoints?: ProcessEndpoints) => void;
   updateStep: (chainId: string, stepId: string, patch: Partial<ProcessStep>) => void;
@@ -286,6 +287,18 @@ export const useStore = create<AppState>()(
         });
       },
       updateChain: (id, patch) => set((s) => ({ chains: s.chains.map((c) => (c.id === id ? { ...c, ...patch } : c)) })),
+      updateConnection: (chainId, stepId, spec, pointInputs, endpoints) => set((s) => {
+        const inputs = new Map(pointInputs.map(({ id, input }) => [id, input]));
+        return {
+          points: s.points.map((point) => {
+            const input = inputs.get(point.id);
+            return input ? { ...point, input } : point;
+          }),
+          chains: s.chains.map((chain) => chain.id === chainId
+            ? { ...chain, steps: chain.steps.map((step) => step.id === stepId ? { ...step, spec, ...endpoints } : step) }
+            : chain),
+        };
+      }),
       removeChain: (id) => set((s) => ({ chains: s.chains.filter((c) => c.id !== id) })),
       addStep: (chainId, spec, endpoints) =>
         set((s) => ({
