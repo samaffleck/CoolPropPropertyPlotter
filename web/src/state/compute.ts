@@ -134,49 +134,48 @@ function inputFromState(state: ThermoState, basis: StateInput): StateInput {
   return { a: basis.a, va: stateValue(state, basis.a), b: basis.b, vb: stateValue(state, basis.b) };
 }
 
-export function usePointStates(fluid: string, points: PinnedPoint[], chains: ProcessChain[] = []) {
-  return useAsync<PointResult[]>(
-    async () => {
-      const resolved = new Map<string, PointResult>();
-      const independent = points.filter((point) => !point.derivedFromStepId);
-      const base = await Promise.all(independent.map(async (point) => ({
-        point,
-        ...(await computePointState(fluid, point.input)),
-      })));
-      base.forEach((point) => resolved.set(point.point.id, point));
+export async function computePointStates(fluid: string, points: PinnedPoint[], chains: ProcessChain[] = []): Promise<PointResult[]> {
+  const resolved = new Map<string, PointResult>();
+  const independent = points.filter((point) => !point.derivedFromStepId);
+  const base = await Promise.all(independent.map(async (point) => ({
+    point,
+    ...(await computePointState(fluid, point.input)),
+  })));
+  base.forEach((point) => resolved.set(point.point.id, point));
 
-      const pending = points.filter((point) => point.derivedFromStepId);
-      for (let pass = 0; pass < pending.length && pending.length; pass++) {
-        let progress = false;
-        for (let i = pending.length - 1; i >= 0; i--) {
-          const point = pending[i];
-          const step = chains.flatMap((chain) => chain.steps).find((candidate) => candidate.id === point.derivedFromStepId);
-          const from = step?.fromPointId ? resolved.get(step.fromPointId) : undefined;
-          if (!step || !from?.state) continue;
-          try {
-            const result = await engine.process(fluid, inputFromState(from.state, from.point.input), step.spec);
-            resolved.set(point.id, {
-              point,
-              state: result.ok ? result.end : null,
-              ...(!result.ok ? { error: result.error } : {}),
-            });
-          } catch (error) {
-            resolved.set(point.id, { point, state: null, error: error instanceof Error ? error.message : "Could not calculate this process endpoint." });
-          }
-          pending.splice(i, 1);
-          progress = true;
-        }
-        if (!progress) break;
+  const pending = points.filter((point) => point.derivedFromStepId);
+  for (let pass = 0; pass < pending.length && pending.length; pass++) {
+    let progress = false;
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const point = pending[i];
+      const step = chains.flatMap((chain) => chain.steps).find((candidate) => candidate.id === point.derivedFromStepId);
+      const from = step?.fromPointId ? resolved.get(step.fromPointId) : undefined;
+      if (!step || !from?.state) continue;
+      try {
+        const result = await engine.process(fluid, inputFromState(from.state, from.point.input), step.spec);
+        resolved.set(point.id, {
+          point,
+          state: result.ok ? result.end : null,
+          ...(!result.ok ? { error: result.error } : {}),
+        });
+      } catch (error) {
+        resolved.set(point.id, { point, state: null, error: error instanceof Error ? error.message : "Could not calculate this process endpoint." });
       }
-      pending.forEach((point) => resolved.set(point.id, {
-        point,
-        state: null,
-        error: "This process endpoint depends on a state that could not be calculated.",
-      }));
-      return points.map((point) => resolved.get(point.id) ?? { point, state: null });
-    },
-    [fluid, JSON.stringify(points), JSON.stringify(chains)],
-  );
+      pending.splice(i, 1);
+      progress = true;
+    }
+    if (!progress) break;
+  }
+  pending.forEach((point) => resolved.set(point.id, {
+    point,
+    state: null,
+    error: "This process endpoint depends on a state that could not be calculated.",
+  }));
+  return points.map((point) => resolved.get(point.id) ?? { point, state: null });
+}
+
+export function usePointStates(fluid: string, points: PinnedPoint[], chains: ProcessChain[] = []) {
+  return useAsync(() => computePointStates(fluid, points, chains), [fluid, JSON.stringify(points), JSON.stringify(chains)]);
 }
 
 export interface StepResult {
@@ -193,63 +192,65 @@ export interface ChainResult {
   steps: StepResult[];
 }
 
-export function useChains(fluid: string, chains: ProcessChain[], points: PointResult[]) {
-  return useAsync<ChainResult[]>(
-    () =>
-      Promise.all(
-        chains.map(async (chain): Promise<ChainResult> => {
-          const steps: StepResult[] = [];
-          const pointById = new Map(points.map((point) => [point.point.id, point]));
-          const firstFrom = chain.steps[0]?.fromPointId ? pointById.get(chain.steps[0].fromPointId) : undefined;
-          for (const st of chain.steps) {
-            const fromPoint = st.fromPointId ? pointById.get(st.fromPointId) : undefined;
-            const toPoint = st.toPointId ? pointById.get(st.toPointId) : undefined;
-            if (st.fromPointId === st.toPointId) {
-              steps.push({ id: st.id, spec: st.spec, result: null, error: "Choose two different state points." });
-              continue;
-            }
-            if (!fromPoint || !toPoint) {
-              steps.push({ id: st.id, spec: st.spec, result: null, error: "The connection references a state point that no longer exists." });
-              continue;
-            }
-            if (!fromPoint.state || !toPoint.state) {
-              steps.push({ id: st.id, spec: st.spec, result: null, error: "One of the selected state points could not be calculated." });
-              continue;
-            }
-            const held = sharedPropertyForProcess(st.spec.kind);
-            if (held !== null) {
-              const fromValue = stateValue(fromPoint.state, held);
-              const toValue = stateValue(toPoint.state, held);
-              if (Math.abs(fromValue - toValue) > Math.max(1e-6, Math.abs(fromValue) * 1e-8)) {
-                steps.push({ id: st.id, spec: st.spec, result: null });
-                continue;
-              }
-            }
-            const r = await engine.process(fluid, inputFromState(fromPoint.state, fromPoint.point.input), st.spec);
-            if (!r.ok) {
-              steps.push({ id: st.id, spec: st.spec, result: null, error: r.error });
-              continue;
-            }
-            const actual = r.end;
-            const expected = toPoint.state;
-            const matches = ([actualValue, expectedValue]: [number, number]) =>
-              Number.isFinite(actualValue) && Number.isFinite(expectedValue)
-              && Math.abs(actualValue - expectedValue) <= Math.max(1e-6, Math.abs(expectedValue) * 1e-4);
-            const reachesTarget = [
-              [actual.T, expected.T], [actual.p, expected.p], [actual.rho, expected.rho],
-              [actual.h, expected.h], [actual.s, expected.s],
-            ].every((values) => matches(values as [number, number]));
-            if (!reachesTarget) {
-              steps.push({ id: st.id, spec: st.spec, result: null, error: "The selected end point does not match this process." });
-              continue;
-            }
-            steps.push({ id: st.id, spec: st.spec, result: r });
+export function computeChains(fluid: string, chains: ProcessChain[], points: PointResult[]): Promise<ChainResult[]> {
+  return Promise.all(
+    chains.map(async (chain): Promise<ChainResult> => {
+      const steps: StepResult[] = [];
+      const pointById = new Map(points.map((point) => [point.point.id, point]));
+      const firstFrom = chain.steps[0]?.fromPointId ? pointById.get(chain.steps[0].fromPointId) : undefined;
+      for (const st of chain.steps) {
+        const fromPoint = st.fromPointId ? pointById.get(st.fromPointId) : undefined;
+        const toPoint = st.toPointId ? pointById.get(st.toPointId) : undefined;
+        if (st.fromPointId === st.toPointId) {
+          steps.push({ id: st.id, spec: st.spec, result: null, error: "Choose two different state points." });
+          continue;
+        }
+        if (!fromPoint || !toPoint) {
+          steps.push({ id: st.id, spec: st.spec, result: null, error: "The connection references a state point that no longer exists." });
+          continue;
+        }
+        if (!fromPoint.state || !toPoint.state) {
+          steps.push({ id: st.id, spec: st.spec, result: null, error: "One of the selected state points could not be calculated." });
+          continue;
+        }
+        const held = sharedPropertyForProcess(st.spec.kind);
+        if (held !== null) {
+          const fromValue = stateValue(fromPoint.state, held);
+          const toValue = stateValue(toPoint.state, held);
+          // Independent flashes can differ by a fraction of a pascal even at
+          // the same specified pressure. Allow one part per million of noise.
+          if (Math.abs(fromValue - toValue) > Math.max(1e-6, Math.abs(fromValue) * 1e-6)) {
+            steps.push({ id: st.id, spec: st.spec, result: null });
+            continue;
           }
-          return { chain, start: firstFrom?.state ?? null, steps };
-        }),
-      ),
-    [fluid, JSON.stringify(chains), JSON.stringify(points)],
+        }
+        const r = await engine.process(fluid, inputFromState(fromPoint.state, fromPoint.point.input), st.spec);
+        if (!r.ok) {
+          steps.push({ id: st.id, spec: st.spec, result: null, error: r.error });
+          continue;
+        }
+        const actual = r.end;
+        const expected = toPoint.state;
+        const matches = ([actualValue, expectedValue]: [number, number]) =>
+          Number.isFinite(actualValue) && Number.isFinite(expectedValue)
+          && Math.abs(actualValue - expectedValue) <= Math.max(1e-6, Math.abs(expectedValue) * 1e-4);
+        const reachesTarget = [
+          [actual.T, expected.T], [actual.p, expected.p], [actual.rho, expected.rho],
+          [actual.h, expected.h], [actual.s, expected.s],
+        ].every((values) => matches(values as [number, number]));
+        if (!reachesTarget) {
+          steps.push({ id: st.id, spec: st.spec, result: null, error: "The selected end point does not match this process." });
+          continue;
+        }
+        steps.push({ id: st.id, spec: st.spec, result: r });
+      }
+      return { chain, start: firstFrom?.state ?? null, steps };
+    }),
   );
+}
+
+export function useChains(fluid: string, chains: ProcessChain[], points: PointResult[]) {
+  return useAsync(() => computeChains(fluid, chains, points), [fluid, JSON.stringify(chains), JSON.stringify(points)]);
 }
 
 export function useCycle(enabled: boolean, fluid: string, cycleId: string, params: Record<string, number>) {
