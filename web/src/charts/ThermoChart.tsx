@@ -95,9 +95,12 @@ export function ThermoChart() {
   const drawRef = useRef<() => void>(() => {});
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedPointCardRef = useRef<HTMLElement | null>(null);
+  const [draggedPointResult, setDraggedPointResult] = useState<PointResult | null>(null);
   const selectedPoint = data.points.find(({ point }) => point.id === selectedPointId);
   const selectedPointRecord = statePoints.find((point) => point.id === selectedPointId);
-  const selectedPointForCard = selectedPoint ?? (selectedPointRecord ? { point: selectedPointRecord, state: null } : undefined);
+  const selectedPointForCard = draggedPointResult?.point.id === selectedPointId
+    ? draggedPointResult
+    : selectedPoint ?? (selectedPointRecord ? { point: selectedPointRecord, state: null } : undefined);
   const schedule = useCallback(() => {
     if (!frame.current) frame.current = requestAnimationFrame(() => drawRef.current());
   }, []);
@@ -219,9 +222,10 @@ export function ThermoChart() {
     );
     if (updated) {
       draggedMarkerRef.current = null;
+      setDraggedPointResult(null);
       schedule();
     }
-  }, [data.points, schedule]);
+  }, [data.points, draggedPointResult, schedule]);
   useEffect(() => {
     let changed = false;
     const dataPointIds = new Set(data.points.map(({ point }) => point.id));
@@ -235,6 +239,7 @@ export function ThermoChart() {
     const preview = draggedMarkerRef.current;
     if (preview && !dataPointIds.has(preview.id) && !storedPointIds.has(preview.id)) {
       draggedMarkerRef.current = null;
+      setDraggedPointResult(null);
       changed = true;
     }
     if (changed) {
@@ -302,7 +307,74 @@ export function ThermoChart() {
     const pointers = new Map<number, { px: number; py: number }>();
     let recentClickActions: string[] = [];
     let drag: { px: number; py: number; vp: Viewport; moved: boolean } | null = null;
-    let pointDrag: { id: string; marker: (typeof scene.markers)[number]; pointInput?: StateInput; movable: boolean; moved: boolean; input?: StateInput; last: { px: number; py: number } } | null = null;
+    type PointDrag = { id: string; marker: (typeof scene.markers)[number]; pointInput?: StateInput; movable: boolean; moved: boolean; input?: StateInput; last: { px: number; py: number } };
+    let pointDrag: PointDrag | null = null;
+    const previewConnection = (id: string, state: ThermoState, basis: StateInput, requestId: number) => {
+      const connectedStep = chains.flatMap((chain) => chain.steps).find((step) =>
+        step.fromPointId === id || step.toPointId === id,
+      );
+      if (connectedStep?.spec.kind !== ProcessKind.Isobaric && connectedStep?.spec.kind !== ProcessKind.Isentropic) return;
+      const fromId = connectedStep.fromPointId;
+      const toId = connectedStep.toPointId;
+      const fromPoint = data.points.find(({ point }) => point.id === fromId);
+      const toPoint = data.points.find(({ point }) => point.id === toId);
+      const held = sharedPropertyForProcess(connectedStep.spec.kind);
+      if (!fromId || !toId || !fromPoint?.state || !toPoint?.state || held === null) return;
+      const movedInput = inputFromState(state, basis);
+      const peerPoint = id === fromId ? toPoint : fromPoint;
+      const peerInput = inputValue(peerPoint.point.input, held) === undefined
+        ? replaceInputProperty(
+            peerPoint.point.input,
+            peerPoint.point.input.a === held ? peerPoint.point.input.b : peerPoint.point.input.a,
+            held,
+            stateValue(state, held),
+          )
+        : setInputValue(peerPoint.point.input, held, stateValue(state, held));
+      const startInput = id === fromId ? movedInput : peerInput;
+      const endInput = id === toId ? movedInput : peerInput;
+      const spec = processSpecForEndpoints(connectedStep.spec.kind, endInput);
+      void engine.process(fluid, startInput, spec).then((processResult) => {
+        if (!processResult.ok || dragPreviewRequestRef.current !== requestId || draggedMarkerRef.current?.id !== id) return;
+        draggedConnectionRef.current = {
+          fromPointId: fromId,
+          toPointId: toId,
+          from: statePoint(processResult.start),
+          to: statePoint(processResult.end),
+          path: processResult.path,
+        };
+        schedule();
+      }).catch(() => {});
+    };
+    type PreviewRequest = { drag: PointDrag; input: StateInput; requestId: number };
+    let previewRunning = false;
+    let queuedPreview: PreviewRequest | null = null;
+    // Calculate one state at a time and keep only the latest queued position.
+    // Publish completed states during continuous movement, even with another queued.
+    const previewPointState = async (request: PreviewRequest): Promise<void> => {
+      if (pointDrag !== request.drag) return;
+      if (previewRunning) {
+        queuedPreview = request;
+        return;
+      }
+      previewRunning = true;
+      try {
+        const result = await computePointState(fluid, request.input);
+        if (pointDrag !== request.drag) return;
+        const point = statePoints.find((candidate) => candidate.id === request.drag.id);
+        if (!point) return;
+        setDraggedPointResult({ point, ...result });
+        if (result.state && dragPreviewRequestRef.current === request.requestId) {
+          previewConnection(point.id, result.state, point.input, request.requestId);
+        }
+      } catch {
+        // A failed preview must not interrupt the drag or change the saved state.
+      } finally {
+        previewRunning = false;
+        const next = queuedPreview;
+        queuedPreview = null;
+        if (next) void previewPointState(next);
+      }
+    };
     let pinch: { d: number; vp: Viewport; mx: number; my: number } | null = null;
     const findPoint = (pos: { px: number; py: number }, vp: Viewport) => {
       const r = rendererRef.current;
@@ -327,6 +399,8 @@ export function ThermoChart() {
         clickTimer.current = null;
       }
       canvas.setPointerCapture(e.pointerId);
+      dragPreviewRequestRef.current++;
+      setDraggedPointResult(null);
       const pos = local(e);
       pointers.set(e.pointerId, pos);
       if (pointers.size === 2) {
@@ -384,49 +458,9 @@ export function ThermoChart() {
           setCoordinate(preview, chart.x, xValue);
           setCoordinate(preview, chart.y, yValue);
           pointDrag.input = { a: chart.x, va: xValue, b: chart.y, vb: yValue };
-          draggedMarkerRef.current = { id: pointDrag.id, point: preview, input: pointDrag.input };
-          if (isobaricOrIsentropic && connectedStep?.fromPointId && connectedStep.toPointId && pointDrag.pointInput) {
-            const requestId = ++dragPreviewRequestRef.current;
-            const draggedId = pointDrag.id;
-            const draggedInput = pointDrag.input;
-            const pointInput = pointDrag.pointInput;
-            const processKind = connectedStep.spec.kind;
-            const fromId = connectedStep.fromPointId;
-            const toId = connectedStep.toPointId;
-            const fromPoint = data.points.find(({ point }) => point.id === fromId);
-            const toPoint = data.points.find(({ point }) => point.id === toId);
-            const held = sharedPropertyForProcess(connectedStep.spec.kind);
-            if (fromPoint?.state && toPoint?.state && held !== null) {
-              void engine.state(fluid, draggedInput).then(async (stateResult) => {
-                if (!stateResult.ok || dragPreviewRequestRef.current !== requestId) return;
-                const movedState = stateResult.state;
-                const movedInput = inputFromState(movedState, pointInput);
-                const peerPoint = draggedId === fromId ? toPoint : fromPoint;
-                const peerInput = inputValue(peerPoint.point.input, held) === undefined
-                  ? replaceInputProperty(
-                      peerPoint.point.input,
-                      peerPoint.point.input.a === held ? peerPoint.point.input.b : peerPoint.point.input.a,
-                      held,
-                      stateValue(movedState, held),
-                    )
-                  : setInputValue(peerPoint.point.input, held, stateValue(movedState, held));
-                const startInput = draggedId === fromId ? movedInput : peerInput;
-                const endInput = draggedId === toId ? movedInput : peerInput;
-                const spec = processSpecForEndpoints(processKind, endInput);
-                const processResult = await engine.process(fluid, startInput, spec);
-                if (!processResult.ok || dragPreviewRequestRef.current !== requestId
-                  || draggedMarkerRef.current?.id !== draggedId) return;
-                draggedConnectionRef.current = {
-                  fromPointId: fromId,
-                  toPointId: toId,
-                  from: statePoint(processResult.start),
-                  to: statePoint(processResult.end),
-                  path: processResult.path,
-                };
-                schedule();
-              }).catch(() => {});
-            }
-          }
+          draggedMarkerRef.current = { id: pointDrag.id, point: preview };
+          const requestId = ++dragPreviewRequestRef.current;
+          void previewPointState({ drag: pointDrag, input: pointDrag.input, requestId });
           setSelectedPointId(pointDrag.id);
           hoverRef.current = null;
           schedule();
@@ -487,8 +521,10 @@ export function ThermoChart() {
         canvas.style.cursor = "crosshair";
         setSelectedPointId(completed.id);
         if (completed.moved && completed.input) {
-          void engine.state(fluid, completed.input).then((result) => {
-            if (result.ok) {
+          const requestId = dragPreviewRequestRef.current;
+          void computePointState(fluid, completed.input).then((result) => {
+            if (dragPreviewRequestRef.current !== requestId) return;
+            if (result.state) {
               const input = completed.pointInput
                 ? {
                     a: completed.pointInput.a,
@@ -497,20 +533,29 @@ export function ThermoChart() {
                     vb: stateValue(result.state, completed.pointInput.b),
                   }
                 : completed.input;
+              // Match the saved input basis when clearing the preview after the
+              // committed state arrives (the chart axes may use a different pair).
+              const point = statePoints.find((candidate) => candidate.id === completed.id);
+              if (point) setDraggedPointResult({ point, state: result.state });
+              if (draggedMarkerRef.current?.id === completed.id) draggedMarkerRef.current.input = input;
               updatePoint(completed.id, { input });
             }
             else if (draggedMarkerRef.current?.id === completed.id) {
               draggedMarkerRef.current = null;
+              setDraggedPointResult(null);
               schedule();
             }
           }).catch(() => {
+            if (dragPreviewRequestRef.current !== requestId) return;
             if (draggedMarkerRef.current?.id === completed.id) {
               draggedMarkerRef.current = null;
+              setDraggedPointResult(null);
               schedule();
             }
           });
         } else {
           draggedMarkerRef.current = null;
+          setDraggedPointResult(null);
           schedule();
         }
         drag = null;
@@ -568,6 +613,9 @@ export function ThermoChart() {
     canvas.addEventListener("pointerleave", onLeave);
     canvas.addEventListener("dblclick", onDouble);
     return () => {
+      dragPreviewRequestRef.current++;
+      pointDrag = null;
+      queuedPreview = null;
       if (clickTimer.current) clearTimeout(clickTimer.current);
       canvas.removeEventListener("wheel", onWheel);
       canvas.removeEventListener("pointerdown", onDown);
