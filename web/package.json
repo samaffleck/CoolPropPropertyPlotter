@@ -12,6 +12,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "bench:probes": "node scripts/bench-probes.mjs",
     "typecheck": "tsc --noEmit",
     "wasm": "node scripts/build-wasm.mjs"
   },

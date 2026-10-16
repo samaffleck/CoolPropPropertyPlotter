@@ -7,6 +7,7 @@
 #include <string>
 
 #include "CoolProp/CoolProp.h"
+#include "CoolProp/AbstractState.h"
 #include "thermo/curves.hpp"
 #include "thermo/cycles.hpp"
 #include "thermo/fluid.hpp"
@@ -23,18 +24,23 @@ val toArray(const std::vector<double>& v) {
 
 val toJs(const Curve& c) { return toArray(c.data); }
 
-val toJs(const State& s) {
-    if (!s.valid) return val::null();
+val toJs(const Point& s) {
     val o = val::object();
-    o.set("phase", std::string(phaseName(s.phase)));
     o.set("T", s.T);
     o.set("p", s.p);
     o.set("rho", s.rho);
     o.set("v", 1.0 / s.rho);
     o.set("h", s.h);
     o.set("s", s.s);
-    o.set("u", s.u);
     o.set("Q", s.Q);
+    return o;
+}
+
+val toJs(const State& s) {
+    if (!s.valid) return val::null();
+    val o = toJs(s.point());
+    o.set("phase", std::string(phaseName(s.phase)));
+    o.set("u", s.u);
     o.set("cp", s.cp);
     o.set("cv", s.cv);
     o.set("gamma", s.cp / s.cv);
@@ -128,6 +134,29 @@ val state(const std::string& fluid, int a, double va, int b, double vb) {
         val o = val::object();
         o.set("ok", true);
         o.set("state", toJs(s));
+        return o;
+    } catch (const std::exception& e) {
+        return error(e.what());
+    }
+}
+
+// Coordinates for viewport probes, without transport properties or derivatives.
+val point(const std::string& fluid, int a, double va, int b, double vb) {
+    try {
+        auto& f = getFluid(fluid);
+        if (!f.update(prop(a), va, prop(b), vb)) return error(f.lastError());
+        val coordinates = toJs(f.point());
+        double u = NaN;
+        try {
+            const double value = f.backend().umass();
+            if (std::isfinite(value)) u = value;
+        } catch (...) {
+            // Internal energy can be unavailable even when the flash succeeds.
+        }
+        coordinates.set("u", u);
+        val o = val::object();
+        o.set("ok", true);
+        o.set("point", coordinates);
         return o;
     } catch (const std::exception& e) {
         return error(e.what());
@@ -283,6 +312,7 @@ EMSCRIPTEN_BINDINGS(thermo) {
     emscripten::function("loadFluid", &loadFluid);
     emscripten::function("fluidInfo", &fluidInfo);
     emscripten::function("state", &state);
+    emscripten::function("point", &point);
     emscripten::function("saturation", &saturation);
     emscripten::function("chart", &chart);
     emscripten::function("process", &process);

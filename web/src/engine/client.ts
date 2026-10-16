@@ -36,6 +36,37 @@ function call<T>(body: RequestBody): Promise<T> {
   });
 }
 
+// Endpoint calculation and connection rendering ask for the same process. Keep
+// the promise so both in-flight and completed results (including paths) are shared.
+const processCache = new Map<string, Promise<Result<ProcessResult>>>();
+const PROCESS_CACHE_LIMIT = 128;
+
+function process(fluid: string, start: StateInput, spec: ProcessSpec): Promise<Result<ProcessResult>> {
+  const key = JSON.stringify([fluid, start.a, start.va, start.b, start.vb, spec.kind, spec.target, spec.value, spec.efficiency ?? 1]);
+  const cached = processCache.get(key);
+  if (cached) {
+    processCache.delete(key);
+    processCache.set(key, cached);
+    return cached;
+  }
+  const discard = () => {
+    if (processCache.get(key) === result) processCache.delete(key);
+  };
+  const result = call<Result<ProcessResult>>({ op: "process", fluid, start, spec }).then(
+    (value) => {
+      if (!value.ok) discard();
+      return value;
+    },
+    (error: unknown) => {
+      discard();
+      throw error;
+    },
+  );
+  processCache.set(key, result);
+  if (processCache.size > PROCESS_CACHE_LIMIT) processCache.delete(processCache.keys().next().value!);
+  return result;
+}
+
 export const engine = {
   info: (fluid: string) => call<FluidInfo | null>({ op: "info", fluid }),
   state: (fluid: string, input: StateInput) => call<Result<{ state: ThermoState }>>({ op: "state", fluid, input }),
@@ -45,8 +76,7 @@ export const engine = {
   chartAuto: (fluid: string, viewport: Viewport, families: Prop[], units: UnitChoice, density = 10, curveViewport?: Viewport) =>
     call<Result<ChartResult>>({ op: "chartAuto", fluid, viewport, curveViewport, families, units, density }),
   defaultView: (fluid: string, axes: AxesSpec) => call<Viewport>({ op: "defaultView", fluid, axes }),
-  process: (fluid: string, start: StateInput, spec: ProcessSpec) =>
-    call<Result<ProcessResult>>({ op: "process", fluid, start, spec }),
+  process,
   cycle: (fluid: string, cycle: string, params: Record<string, number>) =>
     call<Result<CycleResult>>({ op: "cycle", fluid, cycle, params }),
 };

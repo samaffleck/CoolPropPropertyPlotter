@@ -9,6 +9,7 @@ import type {
   Result,
   Saturation,
   StateInput,
+  ThermoPoint,
   ThermoState,
   Viewport,
 } from "../types";
@@ -17,6 +18,7 @@ export interface ThermoModule {
   loadFluid(json: string): Result<object>;
   fluidInfo(name: string): FluidInfo | null;
   state(fluid: string, a: Prop, va: number, b: Prop, vb: number): Result<{ state: ThermoState }>;
+  point(fluid: string, a: Prop, va: number, b: Prop, vb: number): Result<{ point: ThermoPoint }>;
   saturation(fluid: string): Saturation;
   chart(fluid: string, vp: Viewport, isolines: { prop: Prop; values: number[] }[]): Result<ChartResult>;
   process(fluid: string, start: StateInput, spec: ProcessSpec): Result<ProcessResult>;

@@ -83,7 +83,7 @@ export function useIsolines(fluid: string, view: Viewport | undefined, families:
   const selectionKey = `${fluid}:${view?.x}:${view?.y}:${view?.xLog}:${view?.yLog}:${families.join(",")}:${JSON.stringify(units)}:${density}`;
   return useAsync<ChartResult | null>(
     () => {
-      if (!view) return null;
+      if (!view || families.length === 0) return null;
       const expanded = withIsolineOverscan(view);
       const cached = selected.current;
       if (cached?.key === selectionKey) {
