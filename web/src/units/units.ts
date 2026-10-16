@@ -7,6 +7,8 @@ export type Quantity =
   | "density"
   | "specific_volume"
   | "specific_energy"
+  | "mass_flow"
+  | "power"
   | "specific_entropy"
   | "volumetric_energy"
   | "speed"
@@ -66,6 +68,18 @@ export const UNITS: Record<Quantity, Unit[]> = {
     { id: "J/kgK", label: "J kg⁻¹ K⁻¹", scale: 1 },
     { id: "Btu/lbR", label: "Btu lb⁻¹ °R⁻¹", scale: 1 / 4186.8 },
   ],
+  mass_flow: [
+    { id: "kg/s", label: "kg s⁻¹", scale: 1 },
+    { id: "kg/h", label: "kg h⁻¹", scale: 3600 },
+    { id: "g/s", label: "g s⁻¹", scale: 1000 },
+    { id: "lb/h", label: "lb h⁻¹", scale: 3600 / 0.45359237 },
+  ],
+  power: [
+    { id: "kW", label: "kW", scale: 1e-3 },
+    { id: "W", label: "W", scale: 1 },
+    { id: "MW", label: "MW", scale: 1e-6 },
+    { id: "Btu/h", label: "Btu h⁻¹", scale: 3600 / 1055.05585262 },
+  ],
   volumetric_energy: [
     { id: "kJ/m3", label: "kJ m⁻³", scale: 1e-3 },
     { id: "Btu/ft3", label: "Btu ft⁻³", scale: 1 / 37258.95 },
@@ -113,6 +127,8 @@ const base: UnitChoice = {
   density: "kg/m3",
   specific_volume: "m3/kg",
   specific_energy: "kJ/kg",
+  mass_flow: "kg/s",
+  power: "kW",
   specific_entropy: "kJ/kgK",
   volumetric_energy: "kJ/m3",
   speed: "m/s",
@@ -131,7 +147,7 @@ export const UNIT_SYSTEMS: { id: string; label: string; units: UnitChoice }[] = 
   {
     id: "si",
     label: "SI (K, Pa, J kg⁻¹)",
-    units: { ...base, pressure: "Pa", specific_energy: "J/kg", specific_entropy: "J/kgK", viscosity: "Pa.s", conductivity: "W/mK" },
+    units: { ...base, pressure: "Pa", specific_energy: "J/kg", specific_entropy: "J/kgK", viscosity: "Pa.s", conductivity: "W/mK", power: "W" },
   },
   {
     id: "us",
@@ -144,6 +160,8 @@ export const UNIT_SYSTEMS: { id: string; label: string; units: UnitChoice }[] = 
       density: "lb/ft3",
       specific_volume: "ft3/lb",
       specific_energy: "Btu/lb",
+      mass_flow: "lb/h",
+      power: "Btu/h",
       specific_entropy: "Btu/lbR",
       volumetric_energy: "Btu/ft3",
       speed: "ft/s",

@@ -7,6 +7,7 @@ import { computeChains, computePointStates } from "../state/compute";
 import { useStore } from "../state/store";
 import { processSpecForEndpoints } from "../state/connections";
 import { buildScene } from "../charts/scene";
+import { analyzeEnergy } from "../state/energy";
 
 // Keep the real store and middleware, with an in-memory persistence backend.
 vi.mock("zustand/middleware", async (importOriginal) => {
@@ -177,4 +178,60 @@ it("recalculates paths from current endpoints without waiting for the connection
   }] }], await computePointStates("Nitrogen", points));
   expect(computed[0].steps[0].error).toBeUndefined();
   expect(computed[0].steps[0].result?.end.h).toBeCloseTo(3.1e5, 3);
+});
+
+// Compare editable-loop energy against the independently implemented C++ cycle
+// solvers, including both sides of recuperators and irreversible throttling.
+it.each([
+  ["vapor_compression", "R134a"], ["transcritical", "CarbonDioxide"],
+  ["reverse_brayton", "Helium"], ["brayton", "Air"],
+  ["brayton", "CarbonDioxide"], ["rankine", "Water"],
+])("matches the %s energy and performance metrics for %s", async (id, fluid) => {
+  const def = CYCLES.find((cycle) => cycle.id === id)!;
+  const result = await engine.cycle(fluid, id, defaultParams(def, fluid));
+  if (!result.ok) throw new Error(result.error);
+  useStore.setState({ points: [], chains: [], exampleSnapshot: null });
+  const states = new Map(result.states.map(({ id, state }) => [id, state]));
+  const connections = await Promise.all(result.segments.map(async (segment) => ({
+    ...segment, path: Array.from(segment.path),
+    spec: await editableSpec(segment, states.get(segment.from), states.get(segment.to), fluid),
+  })));
+  useStore.getState().loadExampleSnapshot(id, def.name, result.states.map(({ id, state }) => ({
+    id, label: id, input: { a: Prop.P, va: state.p, b: Prop.H, vb: state.h },
+  })), connections);
+  const graph = useStore.getState();
+  const points = await computePointStates(fluid, graph.points, graph.chains);
+  const computed = await computeChains(fluid, graph.chains, points);
+  const loops = analyzeEnergy(graph.chains, computed, graph.exampleSnapshot);
+  expect(loops).toHaveLength(1);
+  expect(loops[0].status).toBe("closed");
+  const totals = loops[0].totals!;
+  expect(totals.balanced).toBe(true);
+  expect(Math.abs(totals.residual)).toBeLessThan(1);
+  const metrics = new Map(result.metrics.map((metric) => [metric.key, metric.value]));
+  const close = (actual: number | null, key: string) => {
+    const expected = metrics.get(key)!;
+    expect(actual, key).not.toBeNull();
+    expect(Math.abs(actual! - expected), key).toBeLessThan(Math.max(1e-5, Math.abs(expected) * 1e-5));
+  };
+  if (id === "vapor_compression" || id === "transcritical") {
+    close(totals.workIn, "w_comp"); close(totals.heatIn, "q_evap"); close(totals.heatOut, "q_cond");
+    close(totals.coolingCOP, "cop_cooling"); close(totals.heatingCOP, "cop_heating");
+  } else if (id === "reverse_brayton") {
+    close(-totals.netWork, "w_net"); close(totals.heatIn, "q_load"); close(totals.coolingCOP, "cop");
+  } else {
+    close(totals.netWork, "w_net"); close(totals.heatIn, "q_in"); close(totals.efficiency, "eta_th");
+  }
+});
+
+it("hydrates older saved units without losing custom choices or energy defaults", () => {
+  const current = useStore.getInitialState();
+  const merge = useStore.persist.getOptions().merge!;
+  const legacy = merge({ unitSystem: "us", units: { specific_energy: "kWh/kg" } }, current);
+  expect(legacy.units).toMatchObject({ mass_flow: "lb/h", power: "Btu/h", specific_energy: "kWh/kg" });
+  expect(legacy.energyMassFlow).toBeNull();
+  expect(merge(undefined, current).units).toEqual(current.units);
+  const saved = merge({ energyMassFlow: 0.25, units: { power: "MW" } }, current);
+  expect(saved.energyMassFlow).toBe(0.25);
+  expect(saved.units.power).toBe("MW");
 });

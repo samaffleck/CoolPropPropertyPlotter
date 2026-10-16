@@ -265,7 +265,16 @@ export function computeChains(fluid: string, chains: ProcessChain[], points: Poi
 }
 
 export function useChains(fluid: string, chains: ProcessChain[], points: PointResult[]) {
-  return useAsync(() => computeChains(fluid, chains, points), [fluid, JSON.stringify(chains), JSON.stringify(points)]);
+  const result = useAsync(
+    () => computeChains(fluid, chains, points).then((data) => ({ data, fluid, points, chains })),
+    [fluid, JSON.stringify(chains), JSON.stringify(points)],
+  );
+  return {
+    ...result,
+    data: result.data?.data ?? null,
+    current: result.data?.fluid === fluid && JSON.stringify(result.data.chains) === JSON.stringify(chains)
+      && JSON.stringify(result.data.points) === JSON.stringify(points),
+  };
 }
 
 export function useCycle(enabled: boolean, fluid: string, cycleId: string, params: Record<string, number>) {

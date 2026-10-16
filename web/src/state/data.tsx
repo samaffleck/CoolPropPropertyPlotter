@@ -13,6 +13,8 @@ interface Data {
   chains: ChainResult[];
   cycle: CycleResult | null;
   exampleSnapshot: ExampleSnapshot | null;
+  energyPending: boolean;
+  energyError: string | null;
 }
 
 const Ctx = createContext<Data | null>(null);
@@ -40,6 +42,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     chains: chainResults.data ?? [],
     cycle: cycleResult.data?.ok ? cycleResult.data.result : null,
     exampleSnapshot,
+    energyPending: !pointStates.error && !chainResults.error && (
+      pointStates.loading || chainResults.loading || !chainResults.current
+      || points.length !== pointStates.data?.length
+      || (pointStates.data ?? []).some(({ point }) => JSON.stringify(point) !== JSON.stringify(points.find((candidate) => candidate.id === point.id)))
+    ),
+    energyError: pointStates.error ?? chainResults.error,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

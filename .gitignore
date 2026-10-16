@@ -6,3 +6,5 @@ web/dist/
 *.tsbuildinfo
 .vercel
 .gstack/
+.vscode/
+/package-lock.json

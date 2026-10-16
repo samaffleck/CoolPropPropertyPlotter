@@ -1,5 +1,5 @@
 import { ArrowRight, Plus, Trash2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Button, IconButton, Message, Select } from "../components/ui";
 import { ProcessKind, Prop, type ThermoState } from "../engine/types";
 import type { ChainResult, PointResult } from "../state/compute";
@@ -8,6 +8,8 @@ import { useData } from "../state/data";
 import { useStore, type ProcessChain } from "../state/store";
 import { stateValue } from "../units/properties";
 import { friendlyError } from "./errors";
+import { analyzeEnergy, heatTransferFor, processEnergyAssumption, type EnergyLoop } from "../state/energy";
+import { ConnectionEnergyReadout, EnergyPanel } from "./EnergyPanel";
 
 export const PROCESS_KINDS: { kind: ProcessKind; label: string }[] = [
   { kind: ProcessKind.Isobaric, label: "Isobaric" },
@@ -24,7 +26,8 @@ const REPLACEMENT_PRIORITY = [Prop.D, Prop.H, Prop.S, Prop.Q, Prop.P, Prop.T];
 export function ProcessPanel() {
   const chains = useStore((s) => s.chains);
   const addChain = useStore((s) => s.addChain);
-  const { chains: results, points } = useData();
+  const { chains: results, points, exampleSnapshot, energyPending, energyError } = useData();
+  const energy = useMemo(() => analyzeEnergy(chains, results, exampleSnapshot), [chains, results, exampleSnapshot]);
   const availablePoints = points.filter((point): point is PointResult & { state: ThermoState } => !!point.state);
   const canConnect = availablePoints.length >= 2;
 
@@ -53,17 +56,20 @@ export function ProcessPanel() {
         </div>
         {!canConnect && <p className="mt-2 text-xs text-ink-3">Add two state points on the plot to connect them.</p>}
       </section>
-      {chain && <ChainEditor result={results.find((result) => result.chain.id === chain.id)} chainId={chain.id} points={availablePoints} />}
+      <EnergyPanel loops={energy} pending={energyPending} error={energyError} />
+      {chain && <ChainEditor result={results.find((result) => result.chain.id === chain.id)} chainId={chain.id} points={availablePoints} energy={energy} />}
     </>
   );
 }
 
-function ChainEditor({ chainId, result, points }: { chainId: string; result?: ChainResult; points: (PointResult & { state: ThermoState })[] }) {
+function ChainEditor({ chainId, result, points, energy }: { chainId: string; result?: ChainResult; points: (PointResult & { state: ThermoState })[]; energy: EnergyLoop[] }) {
   const chain = useStore((s) => s.chains.find((candidate) => candidate.id === chainId))!;
   const addStep = useStore((s) => s.addStep);
   const updateStep = useStore((s) => s.updateStep);
   const updateConnection = useStore((s) => s.updateConnection);
   const removeStep = useStore((s) => s.removeStep);
+  const massFlow = useStore((s) => s.energyMassFlow);
+  const { exampleSnapshot, energyPending, energyError } = useData();
 
   useEffect(() => {
     const pointsById = new Map(points.map((point) => [point.point.id, point] as const));
@@ -100,6 +106,8 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
   return (
     <section className="border-b-0 px-4 py-3">
       {chain.steps.map((step) => {
+        const energyLoop = energy.find((loop) => loop.connections.some((connection) => connection.id === step.id));
+        const connectionEnergy = energyLoop?.connections.find((connection) => connection.id === step.id);
         const resultStep = result?.steps.find((candidate) => candidate.id === step.id);
         const fromId = step.fromPointId ?? "";
         const toId = step.toPointId ?? "";
@@ -194,6 +202,21 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
               />
             </div>
             {resultStep?.error && <div className="mt-2"><Message tone="error">{friendlyError(resultStep.error)}</Message></div>}
+            {(step.spec.kind === ProcessKind.Isobaric || step.spec.kind === ProcessKind.Isothermal || step.spec.kind === ProcessKind.Isochoric) && (
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-ink-3">Heat transfer</span>
+                <Select
+                  label="Heat transfer boundary"
+                  className="min-w-0 flex-1 max-w-40"
+                  value={heatTransferFor(step, exampleSnapshot)}
+                  options={[{ value: "external", label: "External" }, { value: "internal", label: "Within cycle" }]}
+                  onChange={(heatTransfer) => updateStep(chainId, step.id, { heatTransfer })}
+                />
+              </div>
+            )}
+            <div title={processEnergyAssumption(step.spec.kind)}>
+              <ConnectionEnergyReadout energy={energyError ? undefined : connectionEnergy} pending={energyPending} massFlow={energyLoop?.status === "branched" ? null : massFlow} />
+            </div>
           </div>
         );
       })}

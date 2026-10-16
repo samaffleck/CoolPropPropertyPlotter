@@ -22,6 +22,8 @@ export interface ProcessStep {
   spec: ProcessSpec;
   fromPointId?: string;
   toPointId?: string;
+  /** Internal heat exchange is excluded from the cycle's external heat duty. */
+  heatTransfer?: "external" | "internal";
 }
 
 export interface ProcessEndpoints {
@@ -82,6 +84,8 @@ interface AppState {
   chains: ProcessChain[];
   exampleSnapshot: ExampleSnapshot | null;
   cycleId: string;
+  energyMassFlow: number | null;
+  setEnergyMassFlow: (massFlow: number | null) => void;
 
   setFluid: (fluid: string) => void;
   setChart: (id: ChartId) => void;
@@ -129,6 +133,8 @@ export const useStore = create<AppState>()(
       chains: [],
       exampleSnapshot: null,
       cycleId: CYCLES[0].id,
+      energyMassFlow: null,
+      setEnergyMassFlow: (massFlow) => set({ energyMassFlow: massFlow !== null && Number.isFinite(massFlow) && massFlow > 0 ? massFlow : null }),
 
       setFluid: (fluid) => {
         if (fluid === get().fluid) return;
@@ -343,6 +349,11 @@ export const useStore = create<AppState>()(
     {
       name: "thermoplot",
       version: 11,
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<AppState>;
+        const system = UNIT_SYSTEMS.find((system) => system.id === saved.unitSystem) ?? UNIT_SYSTEMS[0];
+        return { ...current, ...saved, units: { ...system.units, ...saved.units } };
+      },
       migrate: (persisted) => {
         type LegacyStep = Omit<ProcessStep, "generatedEndpoint" | "endpointLabel"> & { generatedEndpoint?: boolean; endpointLabel?: string };
         type LegacyChain = Omit<ProcessChain, "steps"> & { steps: LegacyStep[] };
@@ -419,6 +430,7 @@ export const useStore = create<AppState>()(
         chains: s.chains,
         exampleSnapshot: s.exampleSnapshot,
         cycleId: s.cycleId,
+        energyMassFlow: s.energyMassFlow,
       }),
     },
   ),
