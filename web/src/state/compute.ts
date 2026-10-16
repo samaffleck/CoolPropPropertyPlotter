@@ -144,7 +144,9 @@ export async function computePointStates(fluid: string, points: PinnedPoint[], c
   base.forEach((point) => resolved.set(point.point.id, point));
 
   const pending = points.filter((point) => point.derivedFromStepId);
-  for (let pass = 0; pass < pending.length && pending.length; pass++) {
+  // Successful passes shrink this list; only a pass with no progress means
+  // the remaining dependencies are circular, missing, or could not be solved.
+  while (pending.length > 0) {
     let progress = false;
     for (let i = pending.length - 1; i >= 0; i--) {
       const point = pending[i];
