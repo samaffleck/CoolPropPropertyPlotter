@@ -16,8 +16,9 @@ import {
 } from "../engine/types";
 import type { UnitChoice } from "../units/units";
 import type { PinnedPoint, ProcessChain } from "./store";
-import { sharedPropertyForProcess } from "./connections";
+import { processSpecForEndpoints, sharedPropertyForProcess } from "./connections";
 import { stateValue } from "../units/properties";
+import { statePoint } from "../engine/curve";
 
 /** Runs `fn` whenever `deps` change and keeps the latest result; stale results are dropped. */
 function useAsync<T>(fn: () => Promise<T> | null, deps: unknown[], delay = 0): { data: T | null; loading: boolean; error: string | null } {
@@ -226,7 +227,9 @@ export function computeChains(fluid: string, chains: ProcessChain[], points: Poi
             continue;
           }
         }
-        const r = await engine.process(fluid, inputFromState(fromPoint.state, fromPoint.point.input), st.spec);
+        const fitted = processSpecForEndpoints(st.spec.kind, inputFromState(toPoint.state, toPoint.point.input));
+        const spec = { ...fitted, ...(st.spec.efficiency !== undefined ? { efficiency: st.spec.efficiency } : {}) };
+        const r = await engine.process(fluid, inputFromState(fromPoint.state, fromPoint.point.input), spec);
         if (!r.ok) {
           steps.push({ id: st.id, spec: st.spec, result: null, error: r.error });
           continue;
@@ -235,7 +238,7 @@ export function computeChains(fluid: string, chains: ProcessChain[], points: Poi
         const expected = toPoint.state;
         const matches = ([actualValue, expectedValue]: [number, number]) =>
           Number.isFinite(actualValue) && Number.isFinite(expectedValue)
-          && Math.abs(actualValue - expectedValue) <= Math.max(1e-6, Math.abs(expectedValue) * 1e-4);
+          && Math.abs(actualValue - expectedValue) <= Math.max(1e-4, Math.abs(expectedValue) * 1e-4);
         const reachesTarget = [
           [actual.T, expected.T], [actual.p, expected.p], [actual.rho, expected.rho],
           [actual.h, expected.h], [actual.s, expected.s],
@@ -244,7 +247,17 @@ export function computeChains(fluid: string, chains: ProcessChain[], points: Poi
           steps.push({ id: st.id, spec: st.spec, result: null, error: "The selected end point does not match this process." });
           continue;
         }
-        steps.push({ id: st.id, spec: st.spec, result: r });
+        if ((["T", "p", "rho", "h", "s"] as const).every((prop) =>
+          r.start[prop] === fromPoint.state![prop] && r.end[prop] === toPoint.state![prop])) {
+          steps.push({ id: st.id, spec, result: r });
+          continue;
+        }
+        // Use the validated endpoints exactly. Re-flashing near a zero enthalpy
+        // reference can introduce a few microjoules of numerical noise.
+        const path = r.path.slice();
+        path.set(statePoint(fromPoint.state), 0);
+        path.set(statePoint(toPoint.state), path.length - 6);
+        steps.push({ id: st.id, spec, result: { ...r, start: fromPoint.state, end: toPoint.state, path } });
       }
       return { chain, start: firstFrom?.state ?? null, steps };
     }),

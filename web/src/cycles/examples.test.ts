@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CYCLES, defaultParams } from "./catalog";
 import { editableSpec } from "./examples";
 import { engine } from "../engine/client";
-import { Prop, type ProcessSpec, type StateInput, type ThermoState } from "../engine/types";
+import { ProcessKind, Prop, type ProcessSpec, type StateInput, type ThermoState } from "../engine/types";
 import { computeChains, computePointStates } from "../state/compute";
 import { useStore } from "../state/store";
 import { processSpecForEndpoints } from "../state/connections";
@@ -40,6 +40,9 @@ vi.mock("../engine/client", async () => {
   } };
 });
 
+const theme = { surface: "white", text: "black", textMuted: "gray", axis: "gray", font: "sans-serif",
+  iso: {}, dome: "gray", domeFill: "gray", paths: ["red"], accent: "blue" };
+
 function expectSameState(actual: ThermoState, expected: ThermoState) {
   for (const prop of ["T", "p", "rho", "h", "s"] as const) {
     expect(Math.abs(actual[prop] - expected[prop]), prop).toBeLessThanOrEqual(Math.max(1e-6, Math.abs(expected[prop]) * 1e-4));
@@ -71,6 +74,34 @@ for (const def of CYCLES) {
           expect(point.state, point.point.label).not.toBeNull();
           expectSameState(point.state!, states.get(point.point.label)!);
         }
+        // Move each independent point and immediately recompute the entire graph.
+        // No mounted panel or React effect is needed to repair its targets.
+        for (const point of imported.points.filter((point) => !point.derivedFromStepId)) {
+          useStore.setState({ points: imported.points, chains: imported.chains });
+          const input = { ...point.input, va: point.input.va * 1.0001, vb: point.input.vb + Math.max(1, Math.abs(point.input.vb) * 0.0001) };
+          const moved = await engine.state(fluid, input);
+          expect(moved.ok, `move ${point.label}`).toBe(true);
+          if (!moved.ok) throw new Error(moved.error);
+          useStore.getState().updatePoint(point.id, { input }, moved.state, new Map(points.map(({ point, state }) => [point.id, state!])));
+          const graph = useStore.getState();
+          const movedPoints = await computePointStates(fluid, graph.points, graph.chains);
+          const movedChains = await computeChains(fluid, graph.chains, movedPoints);
+          for (const step of movedChains[0].steps) {
+            const connection = graph.chains[0].steps.find((candidate) => candidate.id === step.id)!;
+            const labels = new Map(graph.points.map((point) => [point.id, point.label]));
+            const context = `moving ${point.label}, ${labels.get(connection.fromPointId!)} → ${labels.get(connection.toPointId!)} (${step.spec.kind})`;
+            expect(step.error, context).toBeUndefined();
+            expect(step.result, context).not.toBeNull();
+          }
+          const movedScene = buildScene({
+            theme, units: imported.units, info: null, saturation: null, isolines: null,
+            points: movedPoints, chains: movedChains, cycle: null, exampleSnapshot: imported.exampleSnapshot,
+            showOverlays: { points: true, chains: true, cycle: false },
+          });
+          expect(movedScene.markers).toHaveLength(result.states.length);
+          expect(movedScene.lines, `moving ${point.label}`).toHaveLength(result.segments.length);
+        }
+        useStore.setState({ points: imported.points, chains: imported.chains });
         // Check both the initial import and the endpoint retargeting performed by ChainEditor.
         for (const sync of [false, true]) {
           const chains = sync ? imported.chains.map((chain) => ({
@@ -94,8 +125,7 @@ for (const def of CYCLES) {
             expect(Array.from(step.result!.path).filter((_, index) => index % 6 !== 5).every(Number.isFinite), context).toBe(true);
           }
           const scene = buildScene({
-            theme: { surface: "white", text: "black", textMuted: "gray", axis: "gray", font: "sans-serif",
-              iso: {}, dome: "gray", domeFill: "gray", paths: ["red"], accent: "blue" },
+            theme,
             units: imported.units, info: null, saturation: null, isolines: null,
             points, chains: computed, cycle: null, exampleSnapshot: imported.exampleSnapshot,
             showOverlays: { points: true, chains: true, cycle: false },
@@ -107,3 +137,44 @@ for (const def of CYCLES) {
     }
   });
 }
+
+// A move must preserve the whole editable graph, including properties shared
+// through several connections and targets belonging to derived outlets.
+it("propagates a moved pressure through a cycle and retargets its compressor", async () => {
+  const input = (p: number, h: number): StateInput => ({ a: Prop.P, va: p, b: Prop.H, vb: h });
+  useStore.setState({
+    points: [
+      { id: "a", label: "a", input: input(1e5, 3e5) },
+      { id: "b", label: "b", input: input(5e5, 0), derivedFromStepId: "compressor" },
+      { id: "c", label: "c", input: input(5e5, 2e5) },
+      { id: "d", label: "d", input: input(5e5, 1e5) },
+      { id: "e", label: "e", input: input(5e5, 1.5e5) },
+    ],
+    chains: [{ id: "cycle", start: input(1e5, 3e5), steps: [
+      { id: "compressor", fromPointId: "a", toPointId: "b", spec: { kind: ProcessKind.Compression, target: Prop.P, value: 5e5, efficiency: 0.73 } },
+      { id: "bc", fromPointId: "b", toPointId: "c", spec: { kind: ProcessKind.Isobaric, target: Prop.H, value: 2e5 } },
+      { id: "cd", fromPointId: "c", toPointId: "d", spec: { kind: ProcessKind.Isobaric, target: Prop.H, value: 1e5 } },
+      { id: "de", fromPointId: "d", toPointId: "e", spec: { kind: ProcessKind.Isobaric, target: Prop.H, value: 1.5e5 } },
+      { id: "eb", fromPointId: "e", toPointId: "b", spec: { kind: ProcessKind.Isobaric, target: Prop.H, value: 0 } },
+    ] }],
+    exampleSnapshot: null,
+  });
+  useStore.getState().updatePoint("d", { input: input(6e5, 1.1e5) });
+  const { points, chains } = useStore.getState();
+  expect(points.map((point) => point.input.va)).toEqual([1e5, 6e5, 6e5, 6e5, 6e5]);
+  expect(chains[0].steps[0].spec).toEqual({ kind: ProcessKind.Compression, target: Prop.P, value: 6e5, efficiency: 0.73 });
+});
+
+it("recalculates paths from current endpoints without waiting for the connection panel", async () => {
+  const input = (p: number, h: number): StateInput => ({ a: Prop.P, va: p, b: Prop.H, vb: h });
+  const points = [
+    { id: "a", label: "a", input: input(1e5, 3e5) },
+    { id: "b", label: "b", input: input(1e5, 3.1e5) },
+  ];
+  const computed = await computeChains("Nitrogen", [{ id: "chain", start: points[0].input, steps: [{
+    id: "ab", fromPointId: "a", toPointId: "b",
+    spec: { kind: ProcessKind.Isobaric, target: Prop.H, value: 2e5 },
+  }] }], await computePointStates("Nitrogen", points));
+  expect(computed[0].steps[0].error).toBeUndefined();
+  expect(computed[0].steps[0].result?.end.h).toBeCloseTo(3.1e5, 3);
+});
