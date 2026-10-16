@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 import { CHARTS, type ChartId } from "../charts/charts";
 import { cycleById, CYCLES } from "../cycles/catalog";
 import { ProcessKind, Prop, type ProcessSpec, type StateInput, type Viewport } from "../engine/types";
-import { inputValue, setInputValue, sharedPropertyForProcess } from "./connections";
+import { inputValue, processDerivesEndpoint, setInputValue, sharedPropertyForProcess } from "./connections";
 import { UNIT_SYSTEMS, type Quantity, type UnitChoice } from "../units/units";
 
 export type Mode = "explore" | "process" | "cycle";
@@ -13,6 +13,8 @@ export interface PinnedPoint {
   id: string;
   label: string;
   input: StateInput;
+  /** The connection that calculates this point's state instead of its input pair. */
+  derivedFromStepId?: string;
 }
 
 export interface ProcessStep {
@@ -97,7 +99,7 @@ interface AppState {
   removeExampleConnection: (id: string) => void;
   addChain: (start: StateInput, firstStep?: ProcessSpec, endpoints?: ProcessEndpoints) => void;
   updateChain: (id: string, patch: Partial<ProcessChain>) => void;
-  updateConnection: (chainId: string, stepId: string, spec: ProcessSpec, pointInputs: { id: string; input: StateInput }[], endpoints?: ProcessEndpoints) => void;
+  updateConnection: (chainId: string, stepId: string, spec: ProcessSpec, pointInputs: { id: string; input: StateInput }[], endpoints?: ProcessEndpoints, deriveEndpoint?: boolean) => void;
   removeChain: (id: string) => void;
   addStep: (chainId: string, spec: ProcessSpec, endpoints?: ProcessEndpoints) => void;
   updateStep: (chainId: string, stepId: string, patch: Partial<ProcessStep>) => void;
@@ -173,7 +175,8 @@ export const useStore = create<AppState>()(
           const lockedProps = [...new Set(s.chains.flatMap((chain) => chain.steps.flatMap((step) => {
             if (step.fromPointId !== id && step.toPointId !== id) return [];
             const prop = sharedPropertyForProcess(step.spec.kind);
-            return prop !== null && inputValue(previous.input, prop) !== undefined ? [prop] : [];
+            return prop !== null && !(previous.derivedFromStepId && prop === Prop.P)
+              && inputValue(previous.input, prop) !== undefined ? [prop] : [];
           })))].slice(0, 2);
           if (lockedProps.length >= 2 && lockedProps.some((prop) => inputValue(nextInput, prop) === undefined)) {
             nextInput = {
@@ -211,11 +214,16 @@ export const useStore = create<AppState>()(
         const pointIds = Object.fromEntries(Object.entries(snapshot?.pointIds ?? {}).filter(([, pointId]) => pointId !== id));
         const snapshotPointIds = new Set(Object.values(snapshot?.pointIds ?? {}));
         const removedSnapshotPoint = snapshotPointIds.has(id);
+        const removedStepIds = new Set(s.chains.flatMap((chain) => chain.steps
+          .filter((step) => step.fromPointId === id || step.toPointId === id)
+          .map((step) => step.id)));
         const exampleSnapshot = snapshot && removedSnapshotPoint
           ? { ...snapshot, pointIds, connections: snapshot.connections.filter((connection) => connection.fromPointId !== id && connection.toPointId !== id) }
           : snapshot;
         return {
-          points: s.points.filter((p) => p.id !== id),
+          points: s.points.filter((p) => p.id !== id).map((point) => removedStepIds.has(point.derivedFromStepId ?? "")
+            ? { ...point, derivedFromStepId: undefined }
+            : point),
           selectedPointId: s.selectedPointId === id ? null : s.selectedPointId,
           exampleSnapshot: snapshot && removedSnapshotPoint && !Object.keys(pointIds).length ? null : exampleSnapshot,
           chains: s.chains.map((chain) => ({
@@ -232,7 +240,10 @@ export const useStore = create<AppState>()(
       }),
       loadExampleSnapshot: (cycleId, name, states, connectionInputs) => set((s) => {
         const previousIds = new Set(Object.values(s.exampleSnapshot?.pointIds ?? {}));
-        const points = s.points.filter((point) => !previousIds.has(point.id));
+        const points = s.points.filter((point) => !previousIds.has(point.id)).map((point) => ({
+          ...point,
+          derivedFromStepId: undefined,
+        }));
         const usedLabels = new Set(points.map((point) => point.label));
         const pointIds: Record<string, string> = {};
         const importedPoints = states.map(({ id: stateId, label: requestedLabel, input }) => {
@@ -253,9 +264,20 @@ export const useStore = create<AppState>()(
           fromPointId: connection.fromPointId,
           toPointId: connection.toPointId,
         }));
+        const startPointId = steps[0]?.fromPointId;
+        const derivedEndpoints = new Map(steps
+          .filter((step) => processDerivesEndpoint(step.spec.kind) && step.toPointId !== startPointId)
+          .map((step) => [step.toPointId!, step]));
+        const pointsWithDerivedEndpoints = importedPoints.map((point) => ({
+          ...point,
+          ...(derivedEndpoints.has(point.id) ? {
+            input: { a: Prop.P, va: derivedEndpoints.get(point.id)!.spec.value, b: Prop.H, vb: 0 },
+            derivedFromStepId: derivedEndpoints.get(point.id)!.id,
+          } : {}),
+        }));
         return {
           mode: "explore",
-          points: [...points, ...importedPoints],
+          points: [...points, ...pointsWithDerivedEndpoints],
           selectedPointId: null,
           chains: [{
             id: uid(),
@@ -287,34 +309,58 @@ export const useStore = create<AppState>()(
         });
       },
       updateChain: (id, patch) => set((s) => ({ chains: s.chains.map((c) => (c.id === id ? { ...c, ...patch } : c)) })),
-      updateConnection: (chainId, stepId, spec, pointInputs, endpoints) => set((s) => {
+      updateConnection: (chainId, stepId, spec, pointInputs, endpoints, deriveEndpoint = false) => set((s) => {
         const inputs = new Map(pointInputs.map(({ id, input }) => [id, input]));
+        const currentStep = s.chains.find((chain) => chain.id === chainId)?.steps.find((step) => step.id === stepId);
+        const nextToPointId = endpoints?.toPointId ?? currentStep?.toPointId;
         return {
           points: s.points.map((point) => {
             const input = inputs.get(point.id);
-            return input ? { ...point, input } : point;
+            let derivedFromStepId = point.derivedFromStepId;
+            if (derivedFromStepId === stepId) derivedFromStepId = undefined;
+            if (deriveEndpoint && point.id === nextToPointId) derivedFromStepId = stepId;
+            return input || derivedFromStepId !== point.derivedFromStepId
+              ? { ...point, ...(input ? { input } : {}), derivedFromStepId }
+              : point;
           }),
           chains: s.chains.map((chain) => chain.id === chainId
             ? { ...chain, steps: chain.steps.map((step) => step.id === stepId ? { ...step, spec, ...endpoints } : step) }
             : chain),
         };
       }),
-      removeChain: (id) => set((s) => ({ chains: s.chains.filter((c) => c.id !== id) })),
+      removeChain: (id) => set((s) => {
+        const removedStepIds = new Set(s.chains.find((chain) => chain.id === id)?.steps.map((step) => step.id) ?? []);
+        return {
+          chains: s.chains.filter((c) => c.id !== id),
+          points: s.points.map((point) => removedStepIds.has(point.derivedFromStepId ?? "")
+            ? { ...point, derivedFromStepId: undefined }
+            : point),
+        };
+      }),
       addStep: (chainId, spec, endpoints) =>
         set((s) => ({
           chains: s.chains.map((c) => (c.id === chainId ? { ...c, steps: [...c.steps, { id: uid(), spec, ...endpoints }] } : c)),
         })),
       updateStep: (chainId, stepId, patch) =>
-        set((s) => ({
-          chains: s.chains.map((c) =>
-            c.id === chainId ? { ...c, steps: c.steps.map((st) => {
-              if (st.id !== stepId) return st;
-              return { ...st, ...patch };
-            }) } : c,
-          ),
-        })),
+        set((s) => {
+          const chain = s.chains.find((candidate) => candidate.id === chainId);
+          const step = chain?.steps.find((candidate) => candidate.id === stepId);
+          if (!chain || !step) return {};
+          const nextStep = { ...step, ...patch };
+          const nextToPointId = nextStep.toPointId;
+          const keepDerived = processDerivesEndpoint(nextStep.spec.kind);
+          return {
+            points: s.points.map((point) => point.derivedFromStepId === stepId
+              ? { ...point, derivedFromStepId: keepDerived && point.id === nextToPointId ? stepId : undefined }
+              : point),
+            chains: s.chains.map((c) =>
+              c.id === chainId ? { ...c, steps: c.steps.map((st) => st.id === stepId ? nextStep : st) } : c,
+            ),
+          };
+        }),
       removeStep: (chainId, stepId) =>
         set((s) => ({
+          points: s.points.map((point) => point.derivedFromStepId === stepId ? { ...point, derivedFromStepId: undefined } : point),
           chains: s.chains.map((c) => (c.id === chainId ? { ...c, steps: c.steps.filter((st) => st.id !== stepId) } : c)),
           exampleSnapshot: s.exampleSnapshot ? {
             ...s.exampleSnapshot,
@@ -337,7 +383,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "thermoplot",
-      version: 10,
+      version: 11,
       migrate: (persisted) => {
         type LegacyStep = Omit<ProcessStep, "generatedEndpoint" | "endpointLabel"> & { generatedEndpoint?: boolean; endpointLabel?: string };
         type LegacyChain = Omit<ProcessChain, "steps"> & { steps: LegacyStep[] };
@@ -390,7 +436,18 @@ export const useStore = create<AppState>()(
           const stepIds = new Set(chain.steps.map((step) => step.id));
           chains.splice(0, chains.length, { ...chain, steps: [...chain.steps, ...snapshotSteps.filter((step) => !stepIds.has(step.id))] });
         }
-        return { ...old, theme: "system", families, chains };
+        const startPointId = chains[0]?.steps[0]?.fromPointId;
+        const derivedEndpoints = new Map((chains[0]?.steps ?? [])
+          .filter((step) => processDerivesEndpoint(step.spec.kind) && step.toPointId !== startPointId && step.toPointId)
+          .map((step) => [step.toPointId!, step]));
+        const points = (old.points ?? []).map((point) => ({
+          ...point,
+          ...(derivedEndpoints.has(point.id) ? {
+            input: { a: Prop.P, va: derivedEndpoints.get(point.id)!.spec.value, b: Prop.H, vb: 0 },
+            derivedFromStepId: derivedEndpoints.get(point.id)!.id,
+          } : {}),
+        }));
+        return { ...old, points, theme: "system", families, chains };
       },
       partialize: (s) => ({
         fluid: s.fluid,

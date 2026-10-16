@@ -302,7 +302,7 @@ export function ThermoChart() {
     const pointers = new Map<number, { px: number; py: number }>();
     let recentClickActions: string[] = [];
     let drag: { px: number; py: number; vp: Viewport; moved: boolean } | null = null;
-    let pointDrag: { id: string; marker: (typeof scene.markers)[number]; pointInput?: StateInput; moved: boolean; input?: StateInput; last: { px: number; py: number } } | null = null;
+    let pointDrag: { id: string; marker: (typeof scene.markers)[number]; pointInput?: StateInput; movable: boolean; moved: boolean; input?: StateInput; last: { px: number; py: number } } | null = null;
     let pinch: { d: number; vp: Viewport; mx: number; my: number } | null = null;
     const findPoint = (pos: { px: number; py: number }, vp: Viewport) => {
       const r = rendererRef.current;
@@ -338,8 +338,9 @@ export function ThermoChart() {
       } else {
         const marker = findPoint(pos, vp);
         if (marker?.id) {
-          const pointInput = statePoints.find((point) => point.id === marker.id)?.input;
-          pointDrag = { id: marker.id, marker, pointInput, moved: false, last: pos };
+          const selectedPoint = statePoints.find((point) => point.id === marker.id);
+          const pointInput = selectedPoint?.input;
+          pointDrag = { id: marker.id, marker, pointInput, movable: !selectedPoint?.derivedFromStepId, moved: false, last: pos };
           drag = null;
           canvas.style.cursor = "grabbing";
         } else {
@@ -353,7 +354,7 @@ export function ThermoChart() {
       const r = rendererRef.current;
       const pos = local(e);
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, pos);
-      if (pointDrag && r && viewRef.current) {
+      if (pointDrag?.movable && r && viewRef.current) {
         const dx = pos.px - pointDrag.last.px;
         const dy = pos.py - pointDrag.last.py;
         pointDrag.last = pos;
@@ -760,6 +761,10 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
     const prop = sharedPropertyForProcess(step.spec.kind);
     return prop !== null && inputValue(point.point.input, prop) !== undefined ? [prop] : [];
   })));
+  if (point.point.derivedFromStepId) {
+    lockedProps.add(Prop.H);
+    lockedProps.delete(Prop.P);
+  }
   useEffect(() => {
     setSpecifiedProps([point.point.input.a, point.point.input.b]);
     setSpecifiedValues({});
@@ -767,7 +772,9 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
   if (!point.state) {
     return (
       <ValueBox ref={cardRef} title={`State ${point.point.label}`} ariaLabel={`State ${point.point.label}`} onClose={onClose} interactive>
-        <div className="py-1.5 text-xs text-ink-3">Calculating state…</div>
+        <div className={`py-1.5 text-xs ${point.error ? "text-danger" : "text-ink-3"}`}>
+          {point.error ?? "Calculating state…"}
+        </div>
       </ValueBox>
     );
   }
@@ -779,6 +786,11 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
       a: props[0], va: valueOverrides[props[0]] ?? specifiedValues[props[0]] ?? stateValue(state, props[0]),
       b: props[1], vb: valueOverrides[props[1]] ?? specifiedValues[props[1]] ?? stateValue(state, props[1]),
     };
+    if (point.point.derivedFromStepId) {
+      updatePoint(point.point.id, { input });
+      setSpecifiedValues({});
+      return true;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -810,6 +822,7 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
   };
   const toggleSpecifiedProp = (prop: Prop, checked: boolean) => {
     if (saving) return;
+    if (point.point.derivedFromStepId && prop === Prop.P) return;
     if (checked) {
       if (specifiedProps.includes(prop) || specifiedProps.length >= 2) return;
       const rawValue = stateValue(state, prop);
@@ -824,6 +837,9 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
   };
   return (
     <ValueBox ref={cardRef} title={`State ${point.point.label}`} ariaLabel={`State ${point.point.label}`} onClose={onClose} interactive>
+        {point.point.derivedFromStepId && (
+          <div className="mb-1 text-[10px] text-ink-3">Outlet state calculated by the process. Change pressure to set its target.</div>
+        )}
         {specifiedProps.length !== 2 && (
           <div className="mb-1 text-[10px] text-ink-3">
             {specifiedProps.length === 0 ? "Select two properties to define this state." : "Choose one more property to define this state."}
@@ -837,6 +853,8 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
           const displayValue = available ? toDisplay(unit, rawValue) : null;
           const specified = specifiedProps.includes(prop);
           const locked = lockedProps.has(prop);
+          const derivedProperty = point.point.derivedFromStepId !== undefined && prop === Prop.H;
+          const targetPressure = point.point.derivedFromStepId !== undefined && prop === Prop.P;
           const checked = specified || locked;
           const specifiedValue = toDisplay(unit, specifiedValues[prop] ?? (available ? rawValue : prop === Prop.Q ? 0.5 : rawValue));
           return (
@@ -848,10 +866,10 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={saving || locked || !specified && specifiedProps.length >= 2}
+                  disabled={saving || locked || targetPressure || !specified && specifiedProps.length >= 2}
                   onChange={(event) => toggleSpecifiedProp(prop, event.target.checked)}
-                  aria-label={locked ? `${label} is required by its connection` : `${label} is ${specified ? "specified" : "calculated"}`}
-                  title={locked ? "Required by connection" : specified ? "Specified property" : "Calculated property"}
+                  aria-label={derivedProperty ? "Enthalpy is calculated by the process" : locked ? `${label} is required by its connection` : targetPressure ? "Pressure is the process target" : `${label} is ${specified ? "specified" : "calculated"}`}
+                  title={derivedProperty ? "Calculated by process" : locked ? "Required by connection" : targetPressure ? "Process target pressure" : specified ? "Specified property" : "Calculated property"}
                   className="size-3.5 cursor-pointer accent-accent disabled:cursor-default"
                 />
               )}
@@ -860,7 +878,7 @@ function SelectedPointCard({ cardRef, point, chart, fluid, onClose }: {
                 <InlineEditableValue
                   label={label}
                   value={specifiedValue}
-                  disabled={saving}
+                  disabled={saving || locked}
                   onCommit={(next) => commitSpecifiedValue(prop, next)}
                 />
               ) : displayValue === null ? <span className="w-[9ch] text-right font-mono text-ink-3">—</span> : (

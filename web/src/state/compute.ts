@@ -16,7 +16,8 @@ import {
 } from "../engine/types";
 import type { UnitChoice } from "../units/units";
 import type { PinnedPoint, ProcessChain } from "./store";
-import { inputValue, sharedPropertyForProcess } from "./connections";
+import { sharedPropertyForProcess } from "./connections";
+import { stateValue } from "../units/properties";
 
 /** Runs `fn` whenever `deps` change and keeps the latest result; stale results are dropped. */
 function useAsync<T>(fn: () => Promise<T> | null, deps: unknown[], delay = 0): { data: T | null; loading: boolean; error: string | null } {
@@ -129,12 +130,52 @@ export function computePointState(fluid: string, input: StateInput) {
   return result;
 }
 
-export function usePointStates(fluid: string, points: PinnedPoint[]) {
+function inputFromState(state: ThermoState, basis: StateInput): StateInput {
+  return { a: basis.a, va: stateValue(state, basis.a), b: basis.b, vb: stateValue(state, basis.b) };
+}
+
+export function usePointStates(fluid: string, points: PinnedPoint[], chains: ProcessChain[] = []) {
   return useAsync<PointResult[]>(
-    () => Promise.all(points.map(async (point) => {
-      return { point, ...(await computePointState(fluid, point.input)) };
-    })),
-    [fluid, JSON.stringify(points)],
+    async () => {
+      const resolved = new Map<string, PointResult>();
+      const independent = points.filter((point) => !point.derivedFromStepId);
+      const base = await Promise.all(independent.map(async (point) => ({
+        point,
+        ...(await computePointState(fluid, point.input)),
+      })));
+      base.forEach((point) => resolved.set(point.point.id, point));
+
+      const pending = points.filter((point) => point.derivedFromStepId);
+      for (let pass = 0; pass < pending.length && pending.length; pass++) {
+        let progress = false;
+        for (let i = pending.length - 1; i >= 0; i--) {
+          const point = pending[i];
+          const step = chains.flatMap((chain) => chain.steps).find((candidate) => candidate.id === point.derivedFromStepId);
+          const from = step?.fromPointId ? resolved.get(step.fromPointId) : undefined;
+          if (!step || !from?.state) continue;
+          try {
+            const result = await engine.process(fluid, inputFromState(from.state, from.point.input), step.spec);
+            resolved.set(point.id, {
+              point,
+              state: result.ok ? result.end : null,
+              ...(!result.ok ? { error: result.error } : {}),
+            });
+          } catch (error) {
+            resolved.set(point.id, { point, state: null, error: error instanceof Error ? error.message : "Could not calculate this process endpoint." });
+          }
+          pending.splice(i, 1);
+          progress = true;
+        }
+        if (!progress) break;
+      }
+      pending.forEach((point) => resolved.set(point.id, {
+        point,
+        state: null,
+        error: "This process endpoint depends on a state that could not be calculated.",
+      }));
+      return points.map((point) => resolved.get(point.id) ?? { point, state: null });
+    },
+    [fluid, JSON.stringify(points), JSON.stringify(chains)],
   );
 }
 
@@ -177,14 +218,14 @@ export function useChains(fluid: string, chains: ProcessChain[], points: PointRe
             }
             const held = sharedPropertyForProcess(st.spec.kind);
             if (held !== null) {
-              const fromValue = inputValue(fromPoint.point.input, held);
-              const toValue = inputValue(toPoint.point.input, held);
-              if (fromValue === undefined || toValue === undefined || Math.abs(fromValue - toValue) > Math.max(1e-6, Math.abs(fromValue) * 1e-8)) {
+              const fromValue = stateValue(fromPoint.state, held);
+              const toValue = stateValue(toPoint.state, held);
+              if (Math.abs(fromValue - toValue) > Math.max(1e-6, Math.abs(fromValue) * 1e-8)) {
                 steps.push({ id: st.id, spec: st.spec, result: null });
                 continue;
               }
             }
-            const r = await engine.process(fluid, fromPoint.point.input, st.spec);
+            const r = await engine.process(fluid, inputFromState(fromPoint.state, fromPoint.point.input), st.spec);
             if (!r.ok) {
               steps.push({ id: st.id, spec: st.spec, result: null, error: r.error });
               continue;

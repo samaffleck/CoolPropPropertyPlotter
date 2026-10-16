@@ -28,7 +28,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const info = useFluidInfo(fluid);
   const saturation = useSaturation(fluid);
-  const pointStates = usePointStates(fluid, points);
+  const pointStates = usePointStates(fluid, points, chains);
   const chainResults = useChains(fluid, chains, pointStates.data ?? []);
   const cycleResult = useCycle(mode === "cycle", fluid, cycleId, defaultParams(cycle, fluid));
 

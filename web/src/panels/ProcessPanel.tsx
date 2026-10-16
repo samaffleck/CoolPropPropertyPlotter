@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { Button, IconButton, Message, Select } from "../components/ui";
 import { ProcessKind, Prop, type ThermoState } from "../engine/types";
 import type { ChainResult, PointResult } from "../state/compute";
-import { inputValue, processSpecForEndpoints, replaceInputProperty, setInputValue, sharedPropertyForProcess } from "../state/connections";
+import { inputValue, processDerivesEndpoint, processSpecForEndpoints, replaceInputProperty, setInputValue, sharedPropertyForProcess } from "../state/connections";
 import { useData } from "../state/data";
 import { useStore, type ProcessChain } from "../state/store";
 import { stateValue } from "../units/properties";
@@ -117,6 +117,8 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
                   { id: from.point.id, input: endpointInputs.from },
                   { id: to.point.id, input: endpointInputs.to },
                 ],
+                undefined,
+                processDerivesEndpoint(kind) && !closesCycle(chain.steps, step.id, fromId, toId),
               );
               return;
             }
@@ -148,6 +150,8 @@ function ChainEditor({ chainId, result, points }: { chainId: string; result?: Ch
                   { id: to.point.id, input: endpointInputs.to },
                 ],
                 endpoints,
+                processDerivesEndpoint(step.spec.kind)
+                  && !closesCycle(chain.steps, step.id, endpoints.fromPointId, endpoints.toPointId),
               );
               return;
             }
@@ -254,6 +258,12 @@ function inputsForProcessKind(
   steps: ProcessChain["steps"],
   stepId: string,
 ): { from: PointResult["point"]["input"]; to: PointResult["point"]["input"] } | undefined {
+  if (processDerivesEndpoint(kind)) {
+    return {
+      from: from.point.input,
+      to: { a: Prop.P, va: to.state.p, b: Prop.H, vb: to.state.h },
+    };
+  }
   const held = sharedPropertyForProcess(kind);
   let fromInput = from.point.input;
   let toInput = to.point.input;
@@ -271,4 +281,9 @@ function inputsForProcessKind(
     toInput = setInputValue(toInput, held, stateValue(from.state, held));
   }
   return { from: fromInput, to: toInput };
+}
+
+function closesCycle(steps: ProcessChain["steps"], stepId: string, fromPointId?: string, toPointId?: string): boolean {
+  const startPointId = steps[0]?.fromPointId;
+  return !!startPointId && stepId !== steps[0].id && toPointId === startPointId && fromPointId !== startPointId;
 }

@@ -11,6 +11,10 @@ export function sharedPropertyForProcess(kind: ProcessKind): Prop | null {
   }
 }
 
+export function processDerivesEndpoint(kind: ProcessKind): boolean {
+  return kind === ProcessKind.Compression || kind === ProcessKind.Expansion;
+}
+
 export function inputValue(input: StateInput, prop: Prop): number | undefined {
   if (input.a === prop) return input.va;
   if (input.b === prop) return input.vb;
