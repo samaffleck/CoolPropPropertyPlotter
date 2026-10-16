@@ -151,10 +151,3 @@ export function analyzeEnergy(chains: ProcessChain[], results: ChainResult[], sn
   });
   return loops;
 }
-
-/** SI specific energy [J/kg] × mass flow [kg/s] = power [W]. */
-export function energyRate(specificEnergy: number, massFlow: number | null): number | null {
-  if (massFlow === null || !Number.isFinite(massFlow) || massFlow <= 0 || !Number.isFinite(specificEnergy)) return null;
-  const rate = specificEnergy * massFlow;
-  return Number.isFinite(rate) ? rate : null;
-}

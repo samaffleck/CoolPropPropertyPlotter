@@ -84,8 +84,6 @@ interface AppState {
   chains: ProcessChain[];
   exampleSnapshot: ExampleSnapshot | null;
   cycleId: string;
-  energyMassFlow: number | null;
-  setEnergyMassFlow: (massFlow: number | null) => void;
 
   setFluid: (fluid: string) => void;
   setChart: (id: ChartId) => void;
@@ -133,8 +131,6 @@ export const useStore = create<AppState>()(
       chains: [],
       exampleSnapshot: null,
       cycleId: CYCLES[0].id,
-      energyMassFlow: null,
-      setEnergyMassFlow: (massFlow) => set({ energyMassFlow: massFlow !== null && Number.isFinite(massFlow) && massFlow > 0 ? massFlow : null }),
 
       setFluid: (fluid) => {
         if (fluid === get().fluid) return;
@@ -430,7 +426,6 @@ export const useStore = create<AppState>()(
         chains: s.chains,
         exampleSnapshot: s.exampleSnapshot,
         cycleId: s.cycleId,
-        energyMassFlow: s.energyMassFlow,
       }),
     },
   ),

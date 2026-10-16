@@ -68,7 +68,6 @@ function ChainEditor({ chainId, result, points, energy }: { chainId: string; res
   const updateStep = useStore((s) => s.updateStep);
   const updateConnection = useStore((s) => s.updateConnection);
   const removeStep = useStore((s) => s.removeStep);
-  const massFlow = useStore((s) => s.energyMassFlow);
   const { exampleSnapshot, energyPending, energyError } = useData();
 
   useEffect(() => {
@@ -215,7 +214,7 @@ function ChainEditor({ chainId, result, points, energy }: { chainId: string; res
               </div>
             )}
             <div title={processEnergyAssumption(step.spec.kind)}>
-              <ConnectionEnergyReadout energy={energyError ? undefined : connectionEnergy} pending={energyPending} massFlow={energyLoop?.status === "branched" ? null : massFlow} />
+              <ConnectionEnergyReadout energy={energyError ? undefined : connectionEnergy} pending={energyPending} />
             </div>
           </div>
         );

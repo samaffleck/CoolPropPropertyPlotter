@@ -112,8 +112,6 @@ const QUANTITY_LABELS: Partial<Record<Quantity, string>> = {
   temperature: "Temperature",
   pressure: "Pressure",
   specific_energy: "Enthalpy / energy",
-  mass_flow: "Mass flow",
-  power: "Power / heat rate",
   specific_entropy: "Entropy / heat capacity",
   density: "Density",
   specific_volume: "Specific volume",
