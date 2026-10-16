@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ProcessKind, Prop, type ThermoState } from "../engine/types";
 import type { ChainResult } from "./compute";
-import { analyzeEnergy, energyRate } from "./energy";
+import { analyzeEnergy } from "./energy";
 import type { ExampleSnapshot, ProcessChain } from "./store";
-import { fromDisplay, toDisplay, unitOf, UNIT_SYSTEMS } from "../units/units";
 
 // Independent energy balances in J/kg; each edge satisfies q − w = Δh.
 function network(edges: [string, string, number, number][], enthalpyOffset = 0) {
@@ -156,19 +155,5 @@ describe("network topology and incomplete calculations", () => {
     chain.steps[0].toPointId = undefined;
     expect(analyzeEnergy([chain], [])[0].totals).toBeNull();
   });
-});
-
-it("scales SI energy to power and supports engineering, SI and US units", () => {
-  expect(energyRate(-50000, 0.2)).toBe(-10000);
-  for (const flow of [null, 0, -1, NaN, Infinity]) expect(energyRate(50000, flow)).toBeNull();
-  expect(energyRate(NaN, 1)).toBeNull();
-  expect(energyRate(1e308, 1e308)).toBeNull();
-  const eng = UNIT_SYSTEMS.find((system) => system.id === "eng")!.units;
-  expect(toDisplay(unitOf(eng, "power"), 10000)).toBe(10);
-  expect(fromDisplay(unitOf({ ...eng, mass_flow: "kg/h" }, "mass_flow"), 720)).toBe(0.2);
-  const us = UNIT_SYSTEMS.find((system) => system.id === "us")!.units;
-  const poundsPerHour = toDisplay(unitOf(us, "mass_flow"), 0.2);
-  const btuPerPound = toDisplay(unitOf(us, "specific_energy"), 50000);
-  expect(toDisplay(unitOf(us, "power"), 10000)).toBeCloseTo(poundsPerHour * btuPerPound, 0);
 });
 

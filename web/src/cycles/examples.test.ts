@@ -224,14 +224,10 @@ it.each([
   }
 });
 
-it("hydrates older saved units without losing custom choices or energy defaults", () => {
+it("hydrates older saved units without losing custom choices", () => {
   const current = useStore.getInitialState();
   const merge = useStore.persist.getOptions().merge!;
   const legacy = merge({ unitSystem: "us", units: { specific_energy: "kWh/kg" } }, current);
-  expect(legacy.units).toMatchObject({ mass_flow: "lb/h", power: "Btu/h", specific_energy: "kWh/kg" });
-  expect(legacy.energyMassFlow).toBeNull();
+  expect(legacy.units).toMatchObject({ pressure: "psi", specific_energy: "kWh/kg" });
   expect(merge(undefined, current).units).toEqual(current.units);
-  const saved = merge({ energyMassFlow: 0.25, units: { power: "MW" } }, current);
-  expect(saved.energyMassFlow).toBe(0.25);
-  expect(saved.units.power).toBe("MW");
 });
