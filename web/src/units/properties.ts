@@ -1,5 +1,5 @@
 // Metadata for thermodynamic properties: labels, symbols, unit families and how to read them.
-import { Prop, type ThermoState } from "../engine/types";
+import { Prop, type ThermoPoint, type ThermoState } from "../engine/types";
 import type { Quantity } from "./units";
 
 export interface PropertyMeta {
@@ -52,6 +52,6 @@ export const COORDINATES: Record<Prop, CoordinateMeta> = {
 
 export const INPUT_PROPS: Prop[] = [Prop.T, Prop.P, Prop.H, Prop.S, Prop.D, Prop.V, Prop.U, Prop.Q];
 
-export function stateValue(s: ThermoState, prop: Prop): number {
+export function stateValue(s: ThermoPoint, prop: Prop): number {
   return s[COORDINATES[prop].key];
 }

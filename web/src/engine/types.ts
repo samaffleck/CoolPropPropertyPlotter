@@ -49,8 +49,8 @@ export interface FluidInfo extends FluidSummary {
   hasMeltingLine: boolean;
 }
 
-export interface ThermoState {
-  phase: string;
+/** Thermodynamic coordinates used by chart probes, without derived or transport properties. */
+export interface ThermoPoint {
   T: number;
   p: number;
   rho: number;
@@ -59,6 +59,10 @@ export interface ThermoState {
   s: number;
   u: number;
   Q: number;
+}
+
+export interface ThermoState extends ThermoPoint {
+  phase: string;
   cp: number;
   cv: number;
   gamma: number;

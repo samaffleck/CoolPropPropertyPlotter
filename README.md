@@ -29,6 +29,9 @@ pnpm dev
 
 Vite prints the local address, usually `http://localhost:5173`.
 
+From `web/`, run `pnpm test` for the frontend and WASM regression tests, or
+`pnpm bench:probes` to compare full-state and lightweight viewport calculations.
+
 ## Build the C++ core
 
 The web app uses a committed WebAssembly build, so a C++ toolchain is not needed to run it. To build the native core, install CMake 3.20+, Ninja, and a C++20 compiler, then initialize the CoolProp submodule:

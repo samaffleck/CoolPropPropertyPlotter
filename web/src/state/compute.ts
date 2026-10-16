@@ -83,7 +83,7 @@ export function useIsolines(fluid: string, view: Viewport | undefined, families:
   const selectionKey = `${fluid}:${view?.x}:${view?.y}:${view?.xLog}:${view?.yLog}:${families.join(",")}:${JSON.stringify(units)}:${density}`;
   return useAsync<ChartResult | null>(
     () => {
-      if (!view) return null;
+      if (!view || families.length === 0) return null;
       const expanded = withIsolineOverscan(view);
       const cached = selected.current;
       if (cached?.key === selectionKey) {
@@ -144,7 +144,9 @@ export async function computePointStates(fluid: string, points: PinnedPoint[], c
   base.forEach((point) => resolved.set(point.point.id, point));
 
   const pending = points.filter((point) => point.derivedFromStepId);
-  for (let pass = 0; pass < pending.length && pending.length; pass++) {
+  // Successful passes shrink this list; only a pass with no progress means
+  // the remaining dependencies are circular, missing, or could not be solved.
+  while (pending.length > 0) {
     let progress = false;
     for (let i = pending.length - 1; i >= 0; i--) {
       const point = pending[i];
